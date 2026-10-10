@@ -201,6 +201,12 @@ AGE is designed around local browser storage and local downloads. The current so
 | **sidePanel** | Provide the persistent side panel in Chromium browsers that support it |
 | **nativeMessaging** | Declared for a possible local integration point; a native sidecar is not bundled with this repository |
 
+## Scope of discovery and leaked credentials
+
+AGE is a browser-side API discovery tool, not a Dark Web search engine or a breach-data repository. It can only analyze resources, runtime observations and storage that are available in the active browser context. A key advertised for sale in a private forum or obtained from a separate breach will not become discoverable just by opening VirusTotal. Finding an endpoint also does not grant permission to call it.
+
+This update improves discovery of request-call literals, framework route declarations, and common escaped URL separators in loaded source. Results remain heuristic candidates and should be checked against an authorized test environment. For exposure response, use your organization’s approved secret-scanning and threat-intelligence sources, rotate confirmed exposed keys, and do not validate or use credentials that do not belong to you.
+
 ## Current limitations
 
 - Discovery is heuristic and bounded by source count, data-size limits, browser permissions and what the page loads.
