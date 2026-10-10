@@ -81,7 +81,7 @@
       for (const m of sourceText.matchAll(/https?:\/\/[^\s"'<>\x60\])}\\,;]{4,}/g)) add(m[0], 'absolute');
 
       // Common request call sites, including client.get('/resource') and fetch('/resource').
-      for (const m of sourceText.matchAll(/\b(?:fetch|open|request|get|post|put|patch|delete|head|options|query|mutate)\s*\(\s*['"\x60]((?:https?:\/\/|\/)[A-Za-z0-9_\-./{}[\]:?=&%#@!$*+~]{1,900})['"\x60]/gi)) {
+      for (const m of sourceText.matchAll(/\b(?:fetch|open|request|get|post|put|patch|delete|head|options|query|mutate)\s*\(\s*['"\x60]((?:https?:\/\/|\/)[A-Za-z0-9_\-./{}\[\]:?=&%#@!$*+~]{1,900})['"\x60]/gi)) {
         add(m[1], 'request_call');
       }
 
@@ -97,7 +97,7 @@
       }
 
       // URL/path-like values attached to meaningful configuration keys.
-      for (const m of sourceText.matchAll(/(?:fetch|axios|got|request|http(?:Client|Service|s)?|url|endpoint|api|graphql|baseURL?|apiBaseURL|apiUrl|route|path|href|uri|resource)\s*[=:(,+<{]\s*['"\x60]?((?:https?:\/\/|\/)\/*[A-Za-z0-9_\-./{}[\]:?=&%#@!$*+~]{1,1024})/gi)) {
+      for (const m of sourceText.matchAll(/(?:fetch|axios|got|request|http(?:Client|Service|s)?|url|endpoint|api|graphql|baseURL?|apiBaseURL|apiUrl|route|path|href|uri|resource)\s*[=:(,+<{]\s*['"\x60]?((?:https?:\/\/|\/)\/*[A-Za-z0-9_\-./{}\[\]:?=&%#@!$*+~]{1,1024})/gi)) {
         add(m[1], m[1].startsWith('/') ? 'path_literal' : 'absolute');
       }
 
