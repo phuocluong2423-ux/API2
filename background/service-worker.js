@@ -108,6 +108,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     if (!_ready) await init();
     try {
+      if (!_isAuthorizedMessage(msg, sender)) return { error: 'Unauthorized message source' };
       return await _route(msg, sender);
     } catch (err) {
       console.error('[AGE] Handler error:', msg?.type, err);
@@ -117,12 +118,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; // keep channel open for async
 });
 
+// Only extension-owned pages may use the privileged command router.
+function _isExtensionURL(url) {
+  try { return new URL(url).protocol === 'chrome-extension:' || new URL(url).protocol === 'moz-extension:'; }
+  catch { return false; }
+}
+
+function _isAuthorizedMessage(msg, sender) {
+  if (sender?.tab?.id != null) {
+    return ['CAPTURE', 'ANALYSIS_RESULT', 'STORAGE_SCAN'].includes(msg?.type);
+  }
+  return _isExtensionURL(sender?.url || '');
+}
+
 // Side-panel long-lived port
 chrome.runtime.onConnect.addListener(port => {
-  if (port.name !== 'age-sidepanel') return;
+  if (port.name !== 'age-sidepanel' || !_isExtensionURL(port.sender?.url || '')) return;
   port.onMessage.addListener(async msg => {
     try {
-      const result = await _route(msg, null);
+      const result = await _route(msg, port.sender);
       port.postMessage({ id: msg.id, result });
     } catch (err) {
       port.postMessage({ id: msg.id, error: err.message });
