@@ -59,7 +59,10 @@ export async function replayRequest(capture, options = {}) {
 
   // ── Fresh Cookies ─────────────────────────────────────────────────────────
   let freshCookies = [];
-  if (injectCookies) {
+  let sameOrigin = false;
+  try { sameOrigin = new URL(url).origin === new URL(capture.url).origin; } catch {}
+  // Never carry cookies from the captured origin to a retargeted request.
+  if (injectCookies && sameOrigin) {
     try {
       freshCookies = await chrome.cookies.getAll({ url: capture.url });
       ctx.cookies  = freshCookies;
@@ -109,7 +112,7 @@ export async function replayRequest(capture, options = {}) {
       method,
       headers,
       body:        body ?? undefined,
-      credentials: 'include',
+      credentials: sameOrigin ? 'include' : 'omit',
       redirect:    'follow',
     });
 

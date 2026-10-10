@@ -28,7 +28,7 @@ function _captureToHAREntry(c, redacted) {
       httpVersion: 'HTTP/1.1',
       cookies:     [],
       headers:     _headersToHAR(c.requestHeaders || {}, redacted),
-      queryString: queryPairs(c.url).map(([name, value]) => ({ name, value })),
+      queryString: queryPairs(c.url).map(([name, value]) => ({ name, value: redacted && /token|key|secret|auth|sig|pass|credential/i.test(name) ? '[REDACTED]' : value })),
       headersSize: -1,
       bodySize:    c.requestBody ? c.requestBody.length : 0,
     },
@@ -89,7 +89,7 @@ function _redactURL(url) {
 
 // ─── OpenAPI 3.1 ─────────────────────────────────────────────────────────────
 
-export function exportOpenAPI(captures, discoveredEndpoints = []) {
+export function exportOpenAPI(captures, discoveredEndpoints = [], redacted = false) {
   const paths   = {};
   const servers = new Set();
 
@@ -106,7 +106,7 @@ export function exportOpenAPI(captures, discoveredEndpoints = []) {
           operationId: `${method}_${path.replace(/[^a-zA-Z0-9]/g, '_').replace(/__+/g, '_')}`,
           summary:     `${c.method} ${path}`,
           tags:        c.tags || [],
-          parameters:  _buildParameters(u.searchParams, c.requestHeaders || {}),
+          parameters:  _buildParameters(u.searchParams, c.requestHeaders || {}, redacted),
           responses:   {},
         };
       }
@@ -169,11 +169,12 @@ export function exportOpenAPI(captures, discoveredEndpoints = []) {
   }, null, 2);
 }
 
-function _buildParameters(searchParams, headers) {
+function _buildParameters(searchParams, headers, redacted = false) {
   const params = [];
   const SKIP_H = new Set(['host','content-length','connection','accept-encoding','accept','user-agent']);
   searchParams.forEach((value, name) => {
-    params.push({ name, in: 'query', schema: { type: 'string', example: value } });
+    const example = redacted && /token|key|secret|auth|sig|pass|credential/i.test(name) ? '[REDACTED]' : value;
+    params.push({ name, in: 'query', schema: { type: 'string', example } });
   });
   for (const [name] of Object.entries(headers)) {
     if (!SKIP_H.has(name.toLowerCase())) {
@@ -234,7 +235,7 @@ function _captureToPostmanItem(c, redacted) {
       name:   `${c.responseStatus || 0} ${c.responseStatusText || ''}`,
       code:   c.responseStatus || 0,
       status: c.responseStatusText || '',
-      header: Object.entries(c.responseHeaders || {}).map(([key, value]) => ({ key, value })),
+      header: Object.entries(c.responseHeaders || {}).map(([key, value]) => ({ key, value: redacted && SENSITIVE_HEADERS.has(key.toLowerCase()) ? '[REDACTED]' : value })),
       body:   redacted ? '[REDACTED]' : (c.responseBody || ''),
       _postman_previewlanguage: _guessLang(c.responseHeaders),
     }],

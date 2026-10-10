@@ -1,8 +1,9 @@
 // API Extraction Engine — Content Script Bridge (Isolated World)
 // Bridges MAIN-world hooks/analyzer ↔ background service worker.
-// Uses a random per-session channel set to prevent trivial interception by
-// hostile page code: the MAIN world announces its channel via AGE_INIT and
-// the bridge validates all subsequent messages against that set.
+// The channel handshake is only a routing aid, NOT a security boundary:
+// page JavaScript can observe postMessage traffic. This bridge therefore
+// forwards only narrowly allow-listed ingestion messages and never returns
+// privileged extension data to the page.
 //
 // NOTE: Service-worker intercepted fetch events (respondWith()) cannot be
 // hooked from the page-world or isolated-world context. If a SW is installed
@@ -42,37 +43,26 @@
 
   // ── Forward a message to the background service worker ───────────────────
   function _toBackground(msg) {
-    const { channel, ...fwd } = msg; // strip channel; keep type, id, payload
+    const swMsg = _remap(msg);
+    if (!swMsg) return;
 
-    // Map internal type names to SW router types
-    const swMsg = _remap(fwd);
-
-    chrome.runtime.sendMessage(swMsg, (response) => {
-      if (chrome.runtime.lastError) {
-        // SW may have gone idle; schedule a single retry
-        setTimeout(() => chrome.runtime.sendMessage(swMsg).catch(() => {}), 150);
-        return;
-      }
-      // If the MAIN world registered a response listener, forward it
-      if (response !== undefined && msg.id !== undefined) {
-        window.postMessage({
-          type:     'AGE_RESPONSE',
-          channel:  msg.channel,
-          id:       msg.id,
-          response,
-        }, '*');
-      }
+    // Ingestion is one-way. Never echo extension responses into page context.
+    chrome.runtime.sendMessage(swMsg, () => {
+      // A dropped event is safer than retrying untrusted page-originated data.
+      void chrome.runtime.lastError;
     });
   }
 
-  // Map from hooks/analyzer internal type names to SW router types
+  // Never pass unknown message types through to the privileged extension API.
   function _remap(msg) {
     const map = {
-      CAPTURE:        { type: 'CAPTURE',         payload: msg.payload },
-      ANALYSIS_RESULT:{ type: 'ANALYSIS_RESULT', payload: msg.payload },
-      STORAGE_SCAN:   { type: 'STORAGE_SCAN',    payload: msg.payload },
+      CAPTURE:         { type: 'CAPTURE',          payload: msg.payload },
+      ANALYSIS_RESULT: { type: 'ANALYSIS_RESULT',  payload: msg.payload },
+      STORAGE_SCAN:    { type: 'STORAGE_SCAN',     payload: msg.payload },
     };
-    return map[msg.type] || msg;
+    if (!Object.prototype.hasOwnProperty.call(map, msg.type)) return null;
+    if (!msg.payload || typeof msg.payload !== 'object') return null;
+    return map[msg.type];
   }
 
   // ── Trigger storage scan on DOMContentLoaded ─────────────────────────────

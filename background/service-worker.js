@@ -4,7 +4,7 @@
 
 import { initStorage, addHot, archiveCapture, upsertCredential, upsertEndpoint,
          getCaptures, getAllCaptures, getCredentials, getEndpoints, getStats,
-         getAllGraphQL, upsertGraphQL, clearAll, clearCaptures, clearCredentials,
+         getAllGraphQL, upsertGraphQL, clearAll, clearHot, clearCaptures, clearCredentials,
          clearEndpoints, getCaptureById } from './storage.js';
 import { extractCredentials, extractFromStorage } from './credential-extractor.js';
 import { configureProber, probeURL, probeDiscovery, probeGraphQL,
@@ -104,7 +104,25 @@ chrome.runtime.onStartup.addListener(init);
 
 // ─── Message Routing ──────────────────────────────────────────────────────────
 
+// Messages from websites/content scripts are untrusted. Only accept observation
+// events from web tabs; all privileged commands must originate in extension UI.
+const INGESTION_TYPES = new Set(['CAPTURE', 'ANALYSIS_RESULT', 'STORAGE_SCAN']);
+function isExtensionPage(sender) {
+  return sender?.id === chrome.runtime.id &&
+    /^(chrome-extension|moz-extension):\/\//i.test(sender?.url || '');
+}
+function isWebContentScript(sender) {
+  return sender?.id === chrome.runtime.id &&
+    Number.isInteger(sender?.tab?.id) &&
+    /^https?:\/\//i.test(sender?.url || '');
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  const ingestion = INGESTION_TYPES.has(msg?.type);
+  if (ingestion ? !isWebContentScript(sender) : !isExtensionPage(sender)) {
+    sendResponse({ error: 'unauthorized_sender' });
+    return false;
+  }
   (async () => {
     if (!_ready) await init();
     try {
@@ -120,6 +138,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // Side-panel long-lived port
 chrome.runtime.onConnect.addListener(port => {
   if (port.name !== 'age-sidepanel') return;
+  if (!isExtensionPage(port.sender)) { port.disconnect(); return; }
   port.onMessage.addListener(async msg => {
     try {
       const result = await _route(msg, null);
@@ -209,15 +228,8 @@ async function _handleCapture(capture, sender) {
     if (!capture.tags.includes('AUTH')) capture.tags.push('AUTH');
   }
 
-  // Harvest HttpOnly cookies from background (document.cookie can't see these)
-  try {
-    const all       = await chrome.cookies.getAll({ url: capture.url });
-    const httpOnly  = all.filter(c => c.httpOnly);
-    if (httpOnly.length > 0) {
-      capture.httpOnlyCookies = httpOnly.map(({ name, value, domain, path, secure, httpOnly: ho, expirationDate }) =>
-        ({ name, value, domain, path, secure, httpOnly: ho, expirationDate }));
-    }
-  } catch { /* cookies API may be unavailable for this URL */ }
+  // Do not automatically attach HttpOnly cookies to page-originated captures.
+  // Captures arrive through a page-observable bridge and must be treated as untrusted.
 
   // Persist
   await addHot(capture);
@@ -307,7 +319,7 @@ async function _doExport(type, payload) {
     }
     case 'openapi': {
       const [captures, eps] = await Promise.all([getAllCaptures(), getEndpoints()]);
-      downloadFile(exportOpenAPI(captures, eps), 'age-openapi.json', 'application/json');
+      downloadFile(exportOpenAPI(captures, eps, redacted), 'age-openapi.json', 'application/json');
       return { ok: true };
     }
     case 'postman': {
@@ -360,7 +372,7 @@ async function _updateSettings(newSettings) {
 
 async function _clearData({ captures, credentials, endpoints, all } = {}) {
   if (all) { await clearAll(); return { ok: true }; }
-  if (captures)    await clearCaptures();
+  if (captures) { await Promise.all([clearCaptures(), clearHot()]); }
   if (credentials) await clearCredentials();
   if (endpoints)   await clearEndpoints();
   return { ok: true };
