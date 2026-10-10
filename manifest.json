@@ -3,7 +3,7 @@
   "name": "API Extraction Engine",
   "short_name": "AGE",
   "version": "1.0.0",
-  "description": "Discovers, captures, classifies, and replays every API a web application uses — including hidden endpoints, GraphQL operations, WebSocket channels, and credential material.",
+  "description": "Discovers API candidates, observes browser traffic, and builds a passive multi-surface site inventory for authorized testing.",
 
   "permissions": [
     "storage",
