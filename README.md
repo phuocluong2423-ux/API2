@@ -1,5 +1,5 @@
 # API Extraction Engine (AGE)
-#FOR EDUCATIONAL PURPOSES
+# FOR EDUCATIONAL PURPOSES
 
 > A Chrome / Firefox MV3 browser extension that discovers, captures, classifies, and replays every API a web application uses — including hidden endpoints, GraphQL operations, WebSocket channels, and all credential material the browser holds.
 
