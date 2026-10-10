@@ -6,10 +6,7 @@
 
 A browser extension for developers and security testers who need to understand the API surface of a web application they own or are authorized to assess.
 
-![Manifest V3](https://img.shields.io/badge/Browser_Extension-Manifest_V3-4c8bf5?style=flat-square)
-![Chrome](https://img.shields.io/badge/Chrome-supported-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
-![Firefox](https://img.shields.io/badge/Firefox-manifest_config-FF7139?style=flat-square&logo=firefoxbrowser&logoColor=white)
-![Language](https://img.shields.io/badge/Language-JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=222)
+**Manifest V3** · **Chrome/Chromium** · **Firefox configuration** · **JavaScript**
 
 [Features](#features) · [Install](#installation) · [Quick start](#quick-start) · [Architecture](#architecture) · [Security](#security-and-privacy) · [Limitations](#limitations)
 
@@ -175,6 +172,14 @@ flowchart TB
 | **background/replay.js** | Controlled request replay and response comparison |
 | **background/exporter.js** | Local report and collection generation |
 | **popup/** and **sidepanel/** | User interface |
+
+## Network scope and external sources
+
+AGE does **not** include a Dark Web/Deep Web crawler, breach-data feed, third-party credential marketplace integration, or external threat-intelligence lookup service. It does not send captures to an AGE-operated backend or include usage analytics/telemetry in this source tree. Captures, endpoint records and generated exports are stored locally in the browser or downloaded locally.
+
+Be precise about what “local” means: AGE is a browser extension that inspects the page you open. The page itself may contact its own API hosts or third-party CDNs. Static analysis may fetch JavaScript or source maps referenced by that page (which can also be hosted on a CDN). Those are page resources, not a Dark Web intelligence source. When enabled, the Prober sends HTTP requests to candidate endpoints; Replay sends a request to the destination shown in its controls and may include captured data/cookies depending on options. Keep Prober off unless authorized, review replay destinations, and never replay captured credentials to a host you do not control or have permission to test.
+
+The extension UI uses system fonts; it does not need to download Google Fonts to render. README images/badges are not needed for runtime operation.
 
 ## Security and privacy
 
