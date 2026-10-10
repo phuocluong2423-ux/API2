@@ -250,6 +250,43 @@ function _guessLang(headers = {}) {
   return 'text';
 }
 
+// ─── API Discovery Report ──────────────────────────────────────────────────────
+
+export function exportDiscoveryReport(endpoints, graphqlOps = [], host = '') {
+  const safeEndpoints = (Array.isArray(endpoints) ? endpoints : []).map(ep => ({
+    url: _redactURL(ep.url || ''),
+    host: ep.host || host || '',
+    type: ep.type || 'candidate',
+    source: ep.source || 'unknown',
+    discoveryMethod: ep.discoveryMethod || ep.type || 'static_source',
+    confidence: Number.isFinite(ep.confidence) ? ep.confidence : 45,
+    confidenceLabel: ep.confidenceLabel || 'low',
+    observed: ep.observed === true,
+    evidence: ep.evidence || ep.type || 'candidate',
+    evidenceSources: Array.isArray(ep.evidenceSources) ? ep.evidenceSources.slice(0, 12) : [],
+    timestamp: ep.timestamp || null,
+  }));
+  const safeGraphQL = (Array.isArray(graphqlOps) ? graphqlOps : []).map(op => ({
+    type: op.type || 'unknown',
+    name: op.name || 'anonymous',
+    // Deliberately omit full query source: it may contain private schema details or literals.
+  }));
+  return JSON.stringify({
+    schemaVersion: 1,
+    generator: 'API Extraction Engine',
+    generatedAt: new Date().toISOString(),
+    host,
+    summary: {
+      endpointCandidates: safeEndpoints.length,
+      observedEndpoints: safeEndpoints.filter(ep => ep.observed).length,
+      highConfidence: safeEndpoints.filter(ep => ep.confidence >= 80).length,
+      graphqlOperations: safeGraphQL.length,
+    },
+    endpoints: safeEndpoints,
+    graphqlOperations: safeGraphQL,
+  }, null, 2);
+}
+
 // ─── Credential JSON ──────────────────────────────────────────────────────────
 
 export function exportCredentialsJSON(credentials, redacted = false) {
