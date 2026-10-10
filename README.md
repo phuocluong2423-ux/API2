@@ -64,10 +64,10 @@ The **Deep Find** view builds a broader inventory from the active page and its a
 - Script, stylesheet, image, iframe, icon and web-app-manifest references, plus external origins seen in the page's resource list.
 - Same-origin link routes and GraphQL operation names.
 - Form actions, methods and input field names/types only. Deep Find does **not** record form input values in this profile.
-- Local/session storage key names and approximate value lengths only. Storage values are omitted from the Deep Find profile.
+- Local/session storage key names only. Deep Find does not read or export storage values.
 - Structured-data types, selected page metadata, service-worker control hints, DOM data-attribute names and passive configuration-review signals such as HTTP resource references, external form actions, and external scripts without SRI.
 
-Deep Find is passive: it does not crawl arbitrary paths, submit forms, brute-force routes, or perform reputation lookups. Findings are evidence-backed review hints, not confirmed vulnerabilities. Some observations concern the page or third-party assets it references; they are not Dark Web/Deep Web intelligence. Data is bounded and stored in the browser locally. Captures in the separate All/Auth/Secrets views retain their existing behavior, so treat those capture records as sensitive.
+Deep Find is passive: it does not crawl arbitrary paths, automatically navigate links, submit forms, brute-force routes, or perform reputation lookups. Its per-host inventory accumulates as you browse additional pages on that host. Findings are evidence-backed review hints, not confirmed vulnerabilities. Some observations concern the page or third-party assets it references; they are not Dark Web/Deep Web intelligence. Data is bounded and stored in the browser locally. Captures in the separate All/Auth/Secrets views retain their existing behavior, so treat those capture records as sensitive.
 
 ### Optional endpoint probing
 
