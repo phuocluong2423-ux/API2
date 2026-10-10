@@ -575,8 +575,8 @@
           const key = storage.key(i);
           if (key === null) continue;
           // Report key names and approximate lengths only; never read out values into Deep Find.
-          const value = storage.getItem(key);
-          keys.push({ name: String(key).slice(0, 120), length: String(value || '').length });
+          // Key names only; Deep Find does not read or record the stored value.
+          keys.push({ name: String(key).slice(0, 120) });
         }
       } catch {}
       return keys;
