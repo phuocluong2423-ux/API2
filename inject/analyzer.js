@@ -403,9 +403,32 @@
   // ── Bootstrap ─────────────────────────────────────────────────────────────
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(_runAnalysis, 300));
+    document.addEventListener('DOMContentLoaded', () => setTimeout(_runAnalysis, 300), { once: true });
   } else {
     setTimeout(_runAnalysis, 300);
+  }
+
+  // Re-run a bounded number of times when SPAs inject additional script bundles.
+  // Debouncing prevents repeated DOM changes from starting concurrent scans.
+  let _dynamicScanTimer = null;
+  let _dynamicScanCount = 0;
+  if (typeof MutationObserver !== 'undefined' && document.documentElement) {
+    const observer = new MutationObserver(records => {
+      if (_dynamicScanCount >= 10) return;
+      const insertedScript = records.some(record =>
+        Array.from(record.addedNodes || []).some(node =>
+          node && node.nodeType === 1 &&
+          (node.matches?.('script[src]') || node.querySelector?.('script[src]'))
+        )
+      );
+      if (!insertedScript) return;
+      clearTimeout(_dynamicScanTimer);
+      _dynamicScanTimer = setTimeout(() => {
+        _dynamicScanCount++;
+        _runAnalysis();
+      }, 1000);
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
   }
 
 })(typeof globalThis !== 'undefined' ? globalThis : window);
