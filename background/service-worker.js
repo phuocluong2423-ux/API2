@@ -2,7 +2,7 @@
 // Central hub: message routing, content-script registration, storage, coordination.
 // This file is the entry point for the extension background context.
 
-import { initStorage, addHot, archiveCapture, upsertCredential, upsertEndpoint,
+import { initStorage, addHot, archiveCapture, clearHot, upsertCredential, upsertEndpoint,
          getCaptures, getAllCaptures, getCredentials, getEndpoints, getStats,
          getAllGraphQL, upsertGraphQL, clearAll, clearCaptures, clearCredentials,
          clearEndpoints, getCaptureById } from './storage.js';
@@ -329,7 +329,7 @@ async function _doExport(type, payload) {
     }
     case 'openapi': {
       const [captures, eps] = await Promise.all([getAllCaptures(), getEndpoints()]);
-      downloadFile(exportOpenAPI(captures, eps), 'age-openapi.json', 'application/json');
+      downloadFile(exportOpenAPI(captures, eps, redacted), 'age-openapi.json', 'application/json');
       return { ok: true };
     }
     case 'postman': {
@@ -382,7 +382,7 @@ async function _updateSettings(newSettings) {
 
 async function _clearData({ captures, credentials, endpoints, all } = {}) {
   if (all) { await clearAll(); return { ok: true }; }
-  if (captures)    await clearCaptures();
+  if (captures) { await clearCaptures(); await clearHot(); }
   if (credentials) await clearCredentials();
   if (endpoints)   await clearEndpoints();
   return { ok: true };
