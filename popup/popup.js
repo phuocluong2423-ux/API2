@@ -140,7 +140,7 @@ function _buildDeepFindItems(profile) {
     if (items.length >= 600) return;
     const normalized = String(category || 'Finding').toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const stable = String(url || title || items.length).toLowerCase().replace(/[^a-z0-9/._:-]+/g, '-').slice(0, 100);
-    const methodMap = { Technology: 'TECH', Route: 'ROUTE', Script: 'JS', Style: 'CSS', Image: 'IMG', Frame: 'FRAME', Manifest: 'APP', Form: 'FORM', Storage: 'STORE', Security: 'SEC', Domain: 'HOST', Metadata: 'META', Attribute: 'ATTR' };
+    const methodMap = { Technology: 'TECH', Route: 'ROUTE', Page: 'PAGE', Script: 'JS', Style: 'CSS', Image: 'IMG', Frame: 'FRAME', Manifest: 'APP', Form: 'FORM', Storage: 'STORE', Security: 'SEC', Domain: 'HOST', Metadata: 'META', Attribute: 'ATTR' };
     items.push({
       id: 'deep-' + normalized + '-' + stable + '-' + items.length,
       _isFinding: true,
@@ -156,6 +156,10 @@ function _buildDeepFindItems(profile) {
   };
   const page = profile.page || {};
   const counts = profile.counts || {};
+  for (const visited of (profile.pages || []).slice(0, 100)) {
+    add('Page', visited.title || visited.url, 'Visited by AGE while this browser page was active.',
+      'Last observed: ' + (visited.lastSeen ? new Date(visited.lastSeen).toLocaleString() : 'unknown'), visited.url || '');
+  }
   add('Metadata', page.title || profile.host, page.url || profile.host,
     'Description: ' + (page.description || '—') + '\nLanguage: ' + (page.language || '—') +
     '\nCanonical: ' + (page.canonical || '—') + '\nGenerator: ' + (page.generator || '—') +
@@ -188,12 +192,12 @@ function _buildDeepFindItems(profile) {
       form.action || page.url || '', form.externalAction ? 'review' : 'info');
   }
   for (const item of (profile.storage?.localStorageKeys || []).slice(0, 100)) {
-    add('Storage', 'localStorage: ' + item.name, 'Approximate stored value length: ' + item.length + ' characters',
-      'Only the key name and value length are included in Deep Find; the value content is omitted.', page.url || '');
+    add('Storage', 'localStorage: ' + item.name, 'Storage key name detected.',
+      'Deep Find does not read or export the stored value.', page.url || '');
   }
   for (const item of (profile.storage?.sessionStorageKeys || []).slice(0, 100)) {
-    add('Storage', 'sessionStorage: ' + item.name, 'Approximate stored value length: ' + item.length + ' characters',
-      'Only the key name and value length are included in Deep Find; the value content is omitted.', page.url || '');
+    add('Storage', 'sessionStorage: ' + item.name, 'Storage key name detected.',
+      'Deep Find does not read or export the stored value.', page.url || '');
   }
   for (const name of (profile.dataAttributes || []).slice(0, 100)) {
     add('Attribute', name, 'DOM data-* attribute name detected.', 'Attribute names only; no attribute values are included.', page.url || '');
@@ -208,7 +212,7 @@ function _buildDeepFindItems(profile) {
   add('Metadata', 'Inventory summary',
     (counts.scripts || 0) + ' scripts · ' + (counts.styles || 0) + ' styles · ' + (counts.images || 0) +
     ' images · ' + (counts.routes || 0) + ' routes · ' + (counts.forms || 0) +
-    ' forms · ' + (counts.externalOrigins || 0) + ' external origins',
+    ' forms · ' + (counts.externalOrigins || 0) + ' external origins · ' + ((profile.pages || []).length) + ' pages seen',
     'Storage keys listed: ' + (counts.storageKeys || 0) + '. Resource timing entries seen: ' +
     (assets.performanceResources || 0) + '. Captured: ' +
     (profile.capturedAt ? new Date(profile.capturedAt).toLocaleString() : 'unknown') + '.',
