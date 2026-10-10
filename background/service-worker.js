@@ -183,6 +183,7 @@ async function _route(msg, sender) {
     case 'EXPORT_CREDS_JSON':  return _doExport('creds_json',  payload);
     case 'EXPORT_CREDS_ENV':   return _doExport('creds_env',   payload);
     case 'EXPORT_GRAPHQL_SDL': return _doExport('graphql_sdl', payload);
+    case 'EXPORT_DISCOVERY_REPORT': return _doExport('discovery_report', payload);
 
     default:
       return { error: `Unknown message type: ${type}` };
