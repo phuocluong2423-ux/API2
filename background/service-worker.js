@@ -2,7 +2,7 @@
 // Central hub: message routing, content-script registration, storage, coordination.
 // This file is the entry point for the extension background context.
 
-import { initStorage, addHot, archiveCapture, upsertCredential, upsertEndpoint,
+import { initStorage, addHot, archiveCapture, clearHot, upsertCredential, upsertEndpoint,
          getCaptures, getAllCaptures, getCredentials, getEndpoints, getStats,
          getAllGraphQL, upsertGraphQL, clearAll, clearCaptures, clearCredentials,
          clearEndpoints, getCaptureById } from './storage.js';
@@ -13,7 +13,7 @@ import { replayRequest, getReplayLog, clearReplayLog,
          getChainedTokens, clearChainedTokens } from './replay.js';
 import { exportHAR, exportOpenAPI, exportPostman,
          exportCredentialsJSON, exportCredentialsEnv,
-         exportGraphQLSDL, downloadFile } from './exporter.js';
+         exportGraphQLSDL, exportDiscoveryReport, downloadFile } from './exporter.js';
 import { sha256, randomUUID, origin } from '../shared/utils.js';
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -108,6 +108,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     if (!_ready) await init();
     try {
+      if (!_isAuthorizedMessage(msg, sender)) return { error: 'Unauthorized message source' };
       return await _route(msg, sender);
     } catch (err) {
       console.error('[AGE] Handler error:', msg?.type, err);
@@ -117,12 +118,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; // keep channel open for async
 });
 
+// Only extension-owned pages may use the privileged command router.
+function _isExtensionURL(url) {
+  try { return new URL(url).protocol === 'chrome-extension:' || new URL(url).protocol === 'moz-extension:'; }
+  catch { return false; }
+}
+
+function _isAuthorizedMessage(msg, sender) {
+  if (sender?.tab?.id != null) {
+    return ['CAPTURE', 'ANALYSIS_RESULT', 'STORAGE_SCAN'].includes(msg?.type);
+  }
+  return _isExtensionURL(sender?.url || '');
+}
+
 // Side-panel long-lived port
 chrome.runtime.onConnect.addListener(port => {
-  if (port.name !== 'age-sidepanel') return;
+  if (port.name !== 'age-sidepanel' || !_isExtensionURL(port.sender?.url || '')) return;
   port.onMessage.addListener(async msg => {
     try {
-      const result = await _route(msg, null);
+      const result = await _route(msg, port.sender);
       port.postMessage({ id: msg.id, result });
     } catch (err) {
       port.postMessage({ id: msg.id, error: err.message });
@@ -169,6 +183,7 @@ async function _route(msg, sender) {
     case 'EXPORT_CREDS_JSON':  return _doExport('creds_json',  payload);
     case 'EXPORT_CREDS_ENV':   return _doExport('creds_env',   payload);
     case 'EXPORT_GRAPHQL_SDL': return _doExport('graphql_sdl', payload);
+    case 'EXPORT_DISCOVERY_REPORT': return _doExport('discovery_report', payload);
 
     default:
       return { error: `Unknown message type: ${type}` };
@@ -231,13 +246,21 @@ async function _handleCapture(capture, sender) {
 
 // ─── Analysis Handler ─────────────────────────────────────────────────────────
 
-async function _handleAnalysis({ endpoints = [], graphqlOps = [], host } = {}, sender) {
-  // Store discovered endpoints
-  for (const ep of endpoints) {
-    const id = await sha256(ep.url + (ep.source || '') + host);
+async function _handleAnalysis({ endpoints = [], graphqlOps = [], host, discovery = {} } = {}, sender) {
+  // Persist provenance and confidence so the UI can distinguish static candidates
+  // from resources actually observed in the browser performance timeline.
+  for (const ep of endpoints.slice(0, 2000)) {
+    if (!ep || typeof ep.url !== 'string' || ep.url.length > 2048) continue;
+    const id = await sha256(ep.url + (ep.source || '') + (ep.host || host || ''));
     await upsertEndpoint({
       id, url: ep.url, source: ep.source, host: ep.host || host,
       type: ep.type || 'discovered', timestamp: Date.now(), tags: ['DISCOVERED'],
+      confidence: Number.isFinite(ep.confidence) ? ep.confidence : 45,
+      confidenceLabel: ep.confidenceLabel || 'low',
+      evidence: ep.evidence || ep.type || 'candidate',
+      evidenceSources: Array.isArray(ep.evidenceSources) ? ep.evidenceSources.slice(0, 12) : [ep.source || 'unknown'],
+      discoveryMethod: ep.discoveryMethod || 'static_source',
+      observed: ep.observed === true,
     });
   }
 
@@ -269,7 +292,7 @@ async function _handleAnalysis({ endpoints = [], graphqlOps = [], host } = {}, s
     }
   }
 
-  _broadcast('ANALYSIS_UPDATE', { endpointCount: endpoints.length, host });
+  _broadcast('ANALYSIS_UPDATE', { endpointCount: endpoints.length, host, discovery });
   return { ok: true };
 }
 
@@ -307,7 +330,7 @@ async function _doExport(type, payload) {
     }
     case 'openapi': {
       const [captures, eps] = await Promise.all([getAllCaptures(), getEndpoints()]);
-      downloadFile(exportOpenAPI(captures, eps), 'age-openapi.json', 'application/json');
+      downloadFile(exportOpenAPI(captures, eps, redacted), 'age-openapi.json', 'application/json');
       return { ok: true };
     }
     case 'postman': {
@@ -332,6 +355,12 @@ async function _doExport(type, payload) {
         : '# No GraphQL schemas captured\n';
       downloadFile(content, 'age-schema.graphql', 'text/plain');
       return { ok: true };
+    }
+    case 'discovery_report': {
+      const [eps, schemas] = await Promise.all([getEndpoints(), getAllGraphQL()]);
+      const ops = schemas.flatMap(item => (item.operations || []).map(op => ({ ...op, host: item.host })));
+      downloadFile(exportDiscoveryReport(eps, ops, payload.host || ''), 'age-discovery-report.json', 'application/json');
+      return { ok: true, count: eps.length };
     }
     default: return { error: 'unknown export type' };
   }
@@ -360,7 +389,7 @@ async function _updateSettings(newSettings) {
 
 async function _clearData({ captures, credentials, endpoints, all } = {}) {
   if (all) { await clearAll(); return { ok: true }; }
-  if (captures)    await clearCaptures();
+  if (captures) { await clearCaptures(); await clearHot(); }
   if (credentials) await clearCredentials();
   if (endpoints)   await clearEndpoints();
   return { ok: true };

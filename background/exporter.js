@@ -28,7 +28,7 @@ function _captureToHAREntry(c, redacted) {
       httpVersion: 'HTTP/1.1',
       cookies:     [],
       headers:     _headersToHAR(c.requestHeaders || {}, redacted),
-      queryString: queryPairs(c.url).map(([name, value]) => ({ name, value })),
+      queryString: queryPairs(c.url).map(([name, value]) => ({ name, value: redacted && /token|key|secret|auth|sig|pass|credential|session/i.test(name) ? '[REDACTED]' : value })),
       headersSize: -1,
       bodySize:    c.requestBody ? c.requestBody.length : 0,
     },
@@ -89,7 +89,7 @@ function _redactURL(url) {
 
 // ─── OpenAPI 3.1 ─────────────────────────────────────────────────────────────
 
-export function exportOpenAPI(captures, discoveredEndpoints = []) {
+export function exportOpenAPI(captures, discoveredEndpoints = [], redacted = false) {
   const paths   = {};
   const servers = new Set();
 
@@ -106,7 +106,7 @@ export function exportOpenAPI(captures, discoveredEndpoints = []) {
           operationId: `${method}_${path.replace(/[^a-zA-Z0-9]/g, '_').replace(/__+/g, '_')}`,
           summary:     `${c.method} ${path}`,
           tags:        c.tags || [],
-          parameters:  _buildParameters(u.searchParams, c.requestHeaders || {}),
+          parameters:  _buildParameters(u.searchParams, c.requestHeaders || {}, redacted),
           responses:   {},
         };
       }
@@ -169,15 +169,16 @@ export function exportOpenAPI(captures, discoveredEndpoints = []) {
   }, null, 2);
 }
 
-function _buildParameters(searchParams, headers) {
+function _buildParameters(searchParams, headers, redacted = false) {
   const params = [];
   const SKIP_H = new Set(['host','content-length','connection','accept-encoding','accept','user-agent']);
+  const SENSITIVE = /authorization|cookie|token|secret|api[-_]?key|password|credential|signature|session/i;
   searchParams.forEach((value, name) => {
-    params.push({ name, in: 'query', schema: { type: 'string', example: value } });
+    params.push({ name, in: 'query', schema: { type: 'string', ...((redacted && /token|key|secret|auth|sig|pass|credential|session/i.test(name)) ? {} : { example: value }) } });
   });
   for (const [name] of Object.entries(headers)) {
     if (!SKIP_H.has(name.toLowerCase())) {
-      params.push({ name, in: 'header', schema: { type: 'string' } });
+      params.push({ name, in: 'header', schema: { type: 'string', ...(redacted && SENSITIVE.test(name) ? {} : {}) } });
     }
   }
   return params;
@@ -220,7 +221,7 @@ function _captureToPostmanItem(c, redacted) {
         path:     u.pathname.split('/').filter(Boolean),
         query:    Array.from(u.searchParams.entries()).map(([key, value]) => ({
           key,
-          value: redacted && /token|key|secret/i.test(key) ? '{{REDACTED}}' : value,
+          value: redacted && /token|key|secret|auth|sig|pass|credential|session/i.test(key) ? '{{REDACTED}}' : value,
         })),
         port:     u.port || undefined,
       } : { raw: c.url },
@@ -234,7 +235,7 @@ function _captureToPostmanItem(c, redacted) {
       name:   `${c.responseStatus || 0} ${c.responseStatusText || ''}`,
       code:   c.responseStatus || 0,
       status: c.responseStatusText || '',
-      header: Object.entries(c.responseHeaders || {}).map(([key, value]) => ({ key, value })),
+      header: Object.entries(c.responseHeaders || {}).map(([key, value]) => ({ key, value: redacted && SENSITIVE_HEADERS.has(key.toLowerCase()) ? '{{REDACTED}}' : value })),
       body:   redacted ? '[REDACTED]' : (c.responseBody || ''),
       _postman_previewlanguage: _guessLang(c.responseHeaders),
     }],
@@ -247,6 +248,43 @@ function _guessLang(headers = {}) {
   if (ct.includes('xml'))  return 'xml';
   if (ct.includes('html')) return 'html';
   return 'text';
+}
+
+// ─── API Discovery Report ──────────────────────────────────────────────────────
+
+export function exportDiscoveryReport(endpoints, graphqlOps = [], host = '') {
+  const safeEndpoints = (Array.isArray(endpoints) ? endpoints : []).map(ep => ({
+    url: _redactURL(ep.url || ''),
+    host: ep.host || host || '',
+    type: ep.type || 'candidate',
+    source: ep.source || 'unknown',
+    discoveryMethod: ep.discoveryMethod || ep.type || 'static_source',
+    confidence: Number.isFinite(ep.confidence) ? ep.confidence : 45,
+    confidenceLabel: ep.confidenceLabel || 'low',
+    observed: ep.observed === true,
+    evidence: ep.evidence || ep.type || 'candidate',
+    evidenceSources: Array.isArray(ep.evidenceSources) ? ep.evidenceSources.slice(0, 12) : [],
+    timestamp: ep.timestamp || null,
+  }));
+  const safeGraphQL = (Array.isArray(graphqlOps) ? graphqlOps : []).map(op => ({
+    type: op.type || 'unknown',
+    name: op.name || 'anonymous',
+    // Deliberately omit full query source: it may contain private schema details or literals.
+  }));
+  return JSON.stringify({
+    schemaVersion: 1,
+    generator: 'API Extraction Engine',
+    generatedAt: new Date().toISOString(),
+    host,
+    summary: {
+      endpointCandidates: safeEndpoints.length,
+      observedEndpoints: safeEndpoints.filter(ep => ep.observed).length,
+      highConfidence: safeEndpoints.filter(ep => ep.confidence >= 80).length,
+      graphqlOperations: safeGraphQL.length,
+    },
+    endpoints: safeEndpoints,
+    graphqlOperations: safeGraphQL,
+  }, null, 2);
 }
 
 // ─── Credential JSON ──────────────────────────────────────────────────────────

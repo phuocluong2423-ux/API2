@@ -1,193 +1,239 @@
-# API Extraction Engine (AGE)
-# FOR EDUCATIONAL PURPOSES
+<div align="center">
 
-We are not responsible for any consequences of how you use this tool. Please use it responsibly and do not use it for malicious purposes
+# API Extraction Engine
 
-> A Chrome / Firefox MV3 browser extension that discovers, captures, classifies, and replays every API a web application uses — including hidden endpoints, GraphQL operations, WebSocket channels, and all credential material the browser holds.
+**Discover API candidates. Observe browser traffic. Organize evidence. Export useful documentation.**
+
+A browser extension for developers and security testers who need to understand the API surface of a web application they own or are authorized to assess.
+
+![Manifest V3](https://img.shields.io/badge/Browser_Extension-Manifest_V3-4c8bf5?style=flat-square)
+![Chrome](https://img.shields.io/badge/Chrome-supported-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
+![Firefox](https://img.shields.io/badge/Firefox-manifest_config-FF7139?style=flat-square&logo=firefoxbrowser&logoColor=white)
+![Language](https://img.shields.io/badge/Language-JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=222)
+
+[Features](#features) · [Install](#installation) · [Quick start](#quick-start) · [Architecture](#architecture) · [Security](#security-and-privacy) · [Limitations](#limitations)
+
+</div>
 
 ---
 
-## Install (unpacked)
+## Overview
+
+API Extraction Engine (AGE) combines **runtime observation** with **static source analysis** to build a searchable inventory of API-related endpoints and GraphQL operations.
+
+AGE is designed to help answer:
+
+- Which endpoints did this application actually call?
+- Which API paths or service hosts are referenced in its loaded JavaScript?
+- Where did a candidate come from, and what evidence supports it?
+- What can be documented from captured requests and responses?
+- How did the observed API surface change during a testing session?
+
+> **Important:** Discovery is best-effort. AGE cannot guarantee that it will find every endpoint, and a candidate found in source code is not proof that the endpoint exists or is accessible. Use active probing and request replay only against systems you own or have explicit permission to test.
+
+## Features
+
+### Runtime traffic observation
+
+AGE instruments selected browser APIs in the page's main world and records activity that passes through them:
+
+- **fetch()** and **XMLHttpRequest**
+- **WebSocket** connection metadata and a bounded number of frames
+- **Server-Sent Events (EventSource)**
+- **navigator.sendBeacon()**
+- Request/response metadata and bodies, subject to capture limits
+
+Requests handled entirely inside a service worker or through unsupported browser APIs may not appear in the capture list.
+
+### Deep API discovery
+
+The source analyzer combines several types of evidence:
+
+- External and inline JavaScript references
+- Available source maps and embedded source content
+- API-like URL and path literals, versioned routes, base-URL configuration and route-map keys
+- Named GraphQL operations and gql template strings
+- Framework state/configuration globals and DOM hints
+- Cache Storage entries and Performance Resource Timing clues
+- Bounded rescans when a single-page application inserts new script bundles
+
+Each discovered endpoint can include its source, discovery method, evidence, a heuristic confidence score and an observed flag. Confidence is a **ranking signal, not a calibrated probability**; inspect the evidence before drawing conclusions.
+
+### Optional endpoint probing
+
+The Prober is disabled by default. When enabled, the current implementation can:
+
+- Try **HEAD**, with an **OPTIONS** fallback
+- Check a curated set of common documentation and discovery paths
+- Attempt GraphQL introspection and a lighter type-enumeration fallback
+- Apply a configurable delay between probes and skip paths that match destructive-looking patterns unless Aggressive Mode is enabled
+
+Probing creates real requests to the target. Review the target origin and selected mode before starting; keep aggressive checks off unless you have a controlled test environment.
+
+### Request replay
+
+The replay panel supports method, header and body overrides, variable substitution, optional cookie injection, alternate-host targeting, response comparison and token chaining.
+
+Replay is powerful and can change server-side state. A replay sent to another host may carry sensitive request data or cookies depending on its options. Use a dedicated test account and a trusted test/staging target. Review the final destination and headers before sending.
+
+### Export and reporting
+
+AGE can generate local downloads in these formats:
+
+| Format | Intended use |
+| --- | --- |
+| **HAR 1.2** | Inspect captured HTTP transactions in compatible tools |
+| **OpenAPI 3.1** | Generate a draft description from captures and discovered paths |
+| **Postman Collection 2.1** | Continue manual API exploration in Postman |
+| **Discovery Report JSON** | Review endpoint candidates, source evidence, confidence and GraphQL operation names |
+| **Credential JSON / .env** | Inventory credential-like values for an authorized assessment |
+| **GraphQL SDL** | Export a schema when AGE has captured introspection data |
+
+Generated documentation is a starting point, not a guaranteed-complete or production-ready API specification. Redaction is best-effort; inspect every export before sharing it.
+
+## Installation
+
+AGE is a source-based browser extension. There is no build step in the current repository.
 
 ### Chrome / Chromium
-1. Clone or download this directory.
-2. Open `chrome://extensions`.
-3. Enable **Developer mode** (top-right toggle).
-4. Click **Load unpacked** → select the `api-extraction-engine/` folder.
-5. Pin the extension. The AGE icon appears in the toolbar.
 
-### Firefox (MV3)
-1. Copy `manifest.firefox.json` to `manifest.json` (overwrite).
-2. Open `about:debugging#/runtime/this-firefox`.
-3. Click **Load Temporary Add-on** → select `manifest.json`.
+1. Download the repository ZIP from GitHub and extract it, or clone the repository.
+2. Open **chrome://extensions**.
+3. Enable **Developer mode**.
+4. Select **Load unpacked**.
+5. Choose the extracted repository root—the directory containing **manifest.json**.
+6. Pin AGE to the toolbar if you want quick access.
 
-> **Note:** Firefox MV3 `world: "MAIN"` support requires Firefox 128+. On older versions the runtime hooks will not be injected; the static analyzer and bridge will still work.
+### Firefox
 
----
+1. Download or clone the repository.
+2. In a separate working copy, copy **manifest.firefox.json** to **manifest.json**.
+3. Open **about:debugging#/runtime/this-firefox**.
+4. Select **Load Temporary Add-on** and choose that manifest.json.
+5. Verify the extension on your installed Firefox version before using it for an assessment.
 
-## Permissions Rationale
+The Firefox manifest declares a minimum Gecko version of 128. Browser APIs and main-world injection support can differ between Firefox and Chromium; treat compatibility as something to verify, not assume.
 
-| Permission | Reason |
-|---|---|
-| `<all_urls>` host permission | Required for the background service worker to make cross-origin requests (prober, replay) and for the content scripts to run on all pages |
-| `cookies` | Background access to HttpOnly cookies not visible to `document.cookie`; cookie injection into replays |
-| `scripting` | `registerContentScripts` to inject MAIN-world hooks and the static analyzer |
-| `storage` | Hot ring buffer (chrome.storage.local) and working state (chrome.storage.session) |
-| `downloads` | Export files via `URL.createObjectURL` + `chrome.downloads.download` |
-| `sidePanel` | Persistent side panel UI (Chrome 114+) |
-| `nativeMessaging` | Optional curl_cffi sidecar integration point (see §TLS Fingerprinting) |
+### Updating
 
----
+Download or pull the latest source, then use **Reload** on the extension's details card in the browser's extension manager. Revisit the page being tested after updating so content hooks are injected into a fresh page context.
+
+## Quick start
+
+1. **Install AGE** using the steps above.
+2. **Open a test application** that you own or are authorized to assess.
+3. **Browse normally.** Visit relevant routes and use the application's ordinary features; runtime requests are only observed when the application actually performs them.
+4. **Open AGE** and review the capture list and discovered-endpoint view.
+5. **Filter and inspect evidence.** Compare runtime observations with static candidates; do not assume every candidate is reachable.
+6. **Probe only when appropriate.** Confirm the target origin and keep the Prober disabled unless active checks are part of your authorized test plan.
+7. **Export the report** you need. Review exports for tokens, cookies, personal data and internal URLs before sharing them.
+
+For single-page applications, navigate through the app and allow AGE to observe newly loaded resources. A single initial page load is unlikely to reveal the full API surface.
+
+## Understanding discovery results
+
+| Evidence | What it means |
+| --- | --- |
+| **Runtime observed** | A matching resource was present in the page's performance resource timeline or captured through a supported runtime hook |
+| **Static source** | An API-like URL or path was found in script text or a source map |
+| **DOM / cache / state** | A URL clue was found in a document hint, cache entry or framework state |
+| **Probed** | An active check was sent and a response was recorded |
+| **GraphQL operation** | An operation-like definition was found in source; schema data is collected separately |
+
+These categories are not interchangeable. A runtime resource entry does not necessarily prove that a request succeeded, and a static path does not prove that a server implements it. Confirm important findings in the request details and with a controlled test.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  PAGE (MAIN world)                                              │
-│  inject/hooks.js     — fetch/XHR/WS/SSE/beacon hooks           │
-│  inject/analyzer.js  — script/sourcemap/storage/DOM analyzer   │
-│         │  postMessage (random per-session channel)             │
-├─────────┼───────────────────────────────────────────────────────┤
-│  content/bridge.js (isolated world)                             │
-│         │  chrome.runtime.sendMessage                           │
-├─────────┼───────────────────────────────────────────────────────┤
-│  background/service-worker.js                                   │
-│  ├── storage.js          hot buffer + IndexedDB cold archive    │
-│  ├── credential-extractor.js  JWT/key/cloud/signing extraction  │
-│  ├── prober.js           HEAD/OPTIONS prober (CORS-free)        │
-│  ├── replay.js           request replay + token chaining        │
-│  └── exporter.js         HAR / OpenAPI / Postman / SDL / .env  │
-├─────────────────────────────────────────────────────────────────┤
-│  popup/popup.html + popup.js  — tabbed UI, replay, exports      │
-│  sidepanel/sidepanel.html     — persistent panel variant        │
-└─────────────────────────────────────────────────────────────────┘
-```
+~~~mermaid
+flowchart TB
+    A["Target page<br/>Main world"] --> B["Runtime hooks<br/>fetch · XHR · WebSocket · SSE · beacon"]
+    A --> C["Deep analyzer<br/>scripts · source maps · DOM · cache · resource timing"]
+    B --> D["Content bridge<br/>observation messages only"]
+    C --> D
+    D --> E["Background service worker"]
+    E --> F["Capture & endpoint storage<br/>browser storage + IndexedDB"]
+    E --> G["Optional Prober & Replay"]
+    E --> H["Exporters<br/>HAR · OpenAPI · Postman · JSON · SDL · env"]
+    F --> I["Popup and side panel"]
+    G --> I
+    H --> J["Local downloaded files"]
+~~~
 
-### Channel Security
+### Source layout
 
-The MAIN-world scripts (`hooks.js`, `analyzer.js`) each generate a cryptographically random channel string at load time. They announce it via `postMessage({ type:'AGE_INIT', channel })`. The isolated-world bridge collects accepted channels into a `Set` and rejects any `postMessage` that does not carry an accepted channel. This prevents trivial interception by hostile page JavaScript.
+| Path | Responsibility |
+| --- | --- |
+| **manifest.json** | Chromium extension manifest |
+| **manifest.firefox.json** | Firefox-specific manifest configuration |
+| **inject/hooks.js** | Runtime request and connection observation |
+| **inject/analyzer.js** | Static source analysis and endpoint discovery |
+| **content/bridge.js** | Main-world observation bridge |
+| **background/service-worker.js** | Message routing, coordination, probing, exports and lifecycle |
+| **background/storage.js** | Local capture, endpoint and credential storage |
+| **background/credential-extractor.js** | Detection and classification of credential-like material |
+| **background/prober.js** | Optional endpoint and GraphQL checks |
+| **background/replay.js** | Controlled request replay and response comparison |
+| **background/exporter.js** | Local report and collection generation |
+| **popup/** and **sidepanel/** | User interface |
 
----
+## Security and privacy
 
-## Module Reference
+AGE is a high-privilege development tool. It can inspect traffic on pages where it is active, and its credential-analysis features may encounter session tokens, API keys, cookies, personal data or private application content.
 
-### 2.1 Runtime Interceptors (`inject/hooks.js`, MAIN world)
-- `window.fetch` — full request/response capture including body clone
-- `XMLHttpRequest` — open/setRequestHeader/send hooks + load/error listeners
-- `WebSocket` — URL, subprotocols, first 50 frames in each direction
-- `EventSource` — URL, first 100 SSE payloads
-- `navigator.sendBeacon` — URL + body
-- `Response.prototype.json` / `.text` — passthrough (fetch hook handles cloning)
+- **Use only on authorized targets.** Having an endpoint URL does not grant permission to access it.
+- **Treat captured data as sensitive.** Review and delete captures when no longer needed. Do not commit raw captures, credential files or tokens to Git.
+- **Check every replay destination.** Alternate-host replay and cookie injection can expose sensitive data if used against the wrong origin.
+- **Prefer redacted exports.** Redaction is heuristic and may not catch every sensitive field; manually review files before sharing.
+- **Understand permissions.** The all-URLs host permission is broad because AGE is designed to work on arbitrary test applications. Install only a version you trust.
+- **Review untrusted endpoint evidence.** Page-origin data is treated as observation input, not authorization to run privileged extension commands. The bridge is restricted to ingestion message types; its per-page channel is not considered a secret.
 
-**Service-worker limitation:** Service-worker `fetch` events (respondWith) intercept requests before they reach the network. These cannot be hooked from the page world or isolated world. Mitigation: enable *Bypass for network* in DevTools → Application → Service Workers, or install AGE before the target SW is activated.
+AGE is designed around local browser storage and local downloads. The current source does not require an AGE-hosted backend to capture traffic or generate exports; still, audit the exact source you install and avoid using modified builds you do not trust.
 
-### 2.2 Static Source Analyzer (`inject/analyzer.js`, MAIN world)
-Runs at `document_idle`, re-runs on SPA navigation. Scans:
-- Every `<script src>` and inline `<script>` (fetched fresh, not DOM `.textContent`)
-- Source maps: fetches `//# sourceMappingURL=` targets, analyzes `sourcesContent[]`
-- `localStorage`, `sessionStorage`, `window.*` globals (see `STATE_GLOBALS` in `shared/constants.js`)
-- `<meta>` content, `<link>` prefetch hints, HTML comments
-- `caches.keys()` Cache Storage manifests
+### Permissions
 
-Extracts: absolute URLs, path literals, route-map keys, versioned prefixes, GraphQL operations (named + gql`` tagged), foreign hostnames.
+| Permission | Purpose |
+| --- | --- |
+| **all-URLs host permission** | Run observation scripts and permit extension-context requests for supported probing and replay workflows |
+| **cookies** | Read cookies for supported capture/replay workflows, including cookies inaccessible to page JavaScript |
+| **scripting** | Register the main-world instrumentation scripts |
+| **storage** | Persist settings and capture data in browser storage |
+| **downloads** | Save generated reports and collections |
+| **sidePanel** | Provide the persistent side panel in Chromium browsers that support it |
+| **nativeMessaging** | Declared for a possible local integration point; a native sidecar is not bundled with this repository |
 
-### 2.3 Live Endpoint Prober (`background/prober.js`)
-Off by default. Enable via popup toggle or settings. Runs in background context — **not subject to page CORS**.
-- HEAD with OPTIONS fallback
-- GraphQL introspection + type enumeration fallback
-- Discovery pass: 21 well-known paths per origin
-- Rate-limited (default 250 ms)
-- Destructive path skip (unless Aggressive Mode enabled)
+## Current limitations
 
-### 2.4 Credential Extractor (`background/credential-extractor.js`)
-Extracts and deduplicates (SHA-256) from every capture and storage scan:
-- JWTs (decode header + payload, derive expiry from `exp`)
-- `Authorization: Bearer` / `Basic` (base64-decoded)
-- `Cookie` header (session cookies, JWT cookies)
-- HttpOnly cookies via `chrome.cookies.getAll` (background-only)
-- API keys in query params and headers matching `CREDENTIAL_KEY_RE`
-- OAuth tokens, refresh tokens, PKCE verifiers
-- AWS / GCP / Azure / Slack / GitHub / Stripe / SendGrid patterns
-- Signing headers (`X-Signature`, `X-HMAC`, etc.) with note for offline algorithm recovery
+- Discovery is heuristic and bounded by source count, data-size limits, browser permissions and what the page loads.
+- Server-only routes, unreferenced endpoints, feature-flagged code and endpoints hidden behind unvisited application flows may not be discovered.
+- Service-worker-handled traffic, WebTransport, WebRTC data channels and some binary protocols are not fully instrumented.
+- GraphQL operation text found in JavaScript is not the same as a captured schema; SDL export requires schema data.
+- A successful HEAD or OPTIONS response is not proof that an endpoint's application-level operation works. Conversely, blocked probes do not prove that an endpoint is absent.
+- OpenAPI output is inferred from observed data; parameter types, authentication rules, schemas and required fields may need manual correction.
+- Proxy-related settings exist, but this extension does **not** provide a general-purpose HTTP/SOCKS5 tunnel for all browser-extension requests.
+- The current source has not been validated across every supported Chrome and Firefox version. Test the exact browser and build you intend to use.
 
-### 2.5 Replay Engine (`background/replay.js`)
-- Re-aims at alternate host (staging, attacker-controlled mirror)
-- Variable substitution: `{{token}}`, `{{cookie:name}}`, `{{jwt}}`, `{{random_uuid}}`, `{{timestamp}}`
-- Fresh cookie injection via `chrome.cookies.getAll`
-- Token chaining: tokens in replay responses auto-stored for subsequent replays
-- Fingerprint risk detection: Cloudflare, anti-bot tokens, HMAC signing headers
-- Diff: status and body change logged against original capture
+## Responsible testing
 
-### 2.6 Export Module (`background/exporter.js`)
-All exports are local `Blob` downloads — no server, no telemetry.
-- **HAR 1.2** — importable into Burp Suite, Charles, DevTools, Insomnia
-- **OpenAPI 3.1** — with both live-captured and static-discovered endpoints
-- **Postman Collection v2.1**
-- **Credential JSON** — full structured credential array
-- **Credential .env** — `KEY=value` flat format with JWT payload expansion
-- **GraphQL SDL** — reconstructed from introspection schema
+Use AGE on your own application, a deliberately vulnerable lab, a staging environment you control or another system for which you have explicit authorization. Keep active probing conservative, avoid actions that modify production data, and follow the target's testing rules.
 
-### 2.7 Anonymity Layer (`background/prober.js`, `background/replay.js`)
-- `ANON_STRIP_HEADERS` list: `Referer`, `Origin`, `Sec-Fetch-*`, `User-Agent`, `Cookie` stripped by default from prober requests
-- Optional proxy relay: paste HTTP/SOCKS5 URL in Settings → all extension requests route through it
-- User-agent rotation: newline-separated list, round-robins per request
-- No analytics, no update pings, no remote config, no telemetry anywhere in this codebase
+This project is an inspection and testing aid—not a guarantee of security, completeness or permission.
+
+## Contributing
+
+Improvements that make AGE more accurate, safer and easier to audit are welcome.
+
+1. Keep discovery evidence explainable: record where a candidate came from.
+2. Bound scans and avoid unbounded work on large pages.
+3. Keep privileged extension actions out of the untrusted page-message path.
+4. Make redaction behavior explicit and test all export formats.
+5. Document browser limitations and distinguish implemented behavior from future work.
+
+Before submitting changes, test the extension on a controlled sample site, inspect the browser console for errors, and verify capture, discovery, replay and export flows affected by the change.
 
 ---
 
-## TLS Fingerprinting
+<div align="center">
 
-Certain endpoints use server-side TLS fingerprinting (JA3/JA4) to reject clients whose TLS handshake does not match expected browser fingerprints. The extension's background `fetch()` uses the browser's own TLS stack and **should** match a normal Chrome fingerprint. However:
+**API Extraction Engine · Built for authorized API discovery and testing**
 
-- Cloudflare Bot Management, DataDome, PerimeterX, and similar products may still fingerprint at the HTTP/2 frame level or via JavaScript challenges.
-- When AGE detects Cloudflare headers, anti-bot tokens, or signing headers in a capture, the Replay panel shows a **Fingerprint Warning** explaining the risk.
-- **Integration point for curl_cffi sidecar:** In `background/replay.js`, replace the `fetch()` call inside `replayRequest()` with a `chrome.runtime.sendNativeMessage('age_sidecar', ...)` call to a local Python process running `curl_cffi`. The native host manifest and Python script are out of scope for this extension but the hook location is clearly marked.
-
----
-
-## Known Limitations
-
-| Limitation | Notes |
-|---|---|
-| Service-worker intercepted requests | Cannot be hooked from page world. Enable "Bypass for network" in DevTools as a workaround. |
-| HTTP/2 PUSH frames | Not observable from the extension. |
-| WebTransport / WebRTC data channels | Not yet hooked. See §How to Extend. |
-| gRPC-Web | Appears as `fetch` POST to a gRPC endpoint. Body is binary protobuf — captured as binary blob. |
-| Proxy support | Extension uses browser `fetch()`. True SOCKS5 proxying requires OS-level routing or the curl_cffi sidecar. |
-| Firefox MAIN world | Requires Firefox 128+. |
-
----
-
-## How to Extend
-
-### Adding a New Hook Type (e.g. WebTransport, WebRTC DataChannel)
-
-1. Open `inject/hooks.js`.
-2. At the bottom of the IIFE, add your hook following the same pattern:
-   ```js
-   const _OrigWT = globalThis.WebTransport;
-   function _HookedWT(url, opts) {
-     const wt = new _OrigWT(url, opts);
-     _send('CAPTURE', { type: 'webtransport', url, timestamp: Date.now() });
-     // hook wt.createBidirectionalStream(), datagrams.readable, etc.
-     return wt;
-   }
-   globalThis.WebTransport = _HookedWT;
-   ```
-3. Add a `wt` classification case in `background/service-worker.js → _classifyCapture()`.
-
-### Adding a New Discovery Source (e.g. mobile APK endpoint references)
-
-1. Add your extractor function to `inject/analyzer.js` (or a new `inject/apk-analyzer.js`).
-2. Register the new file in `background/service-worker.js → _registerContentScripts()`.
-3. The extracted endpoints flow through the same `ANALYSIS_RESULT` message path and land in IndexedDB automatically.
-
-### Adding a New Export Format
-
-1. Add your serializer function to `background/exporter.js`.
-2. Add a `case 'your_format':` branch in `background/service-worker.js → _doExport()`.
-3. Add an export button in `popup/popup.html` and wire it in `popup/popup.js`.
-
----
-
-*API Extraction Engine — client-side observation only. No credential exfiltration to any remote host. No tracking. No analytics.*
+</div>

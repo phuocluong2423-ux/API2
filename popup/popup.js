@@ -520,6 +520,7 @@ function bindEvents() {
   // Exports
   $('btn-export-har').addEventListener('click',     () => doExport('EXPORT_HAR'));
   $('btn-export-openapi').addEventListener('click', () => doExport('EXPORT_OPENAPI'));
+  $('btn-export-report').addEventListener('click', () => doExport('EXPORT_DISCOVERY_REPORT'));
   $('btn-export-postman').addEventListener('click', () => doExport('EXPORT_POSTMAN'));
   $('btn-export-creds').addEventListener('click',   () => doExport('EXPORT_CREDS_JSON'));
   $('btn-export-env').addEventListener('click',     () => doExport('EXPORT_CREDS_ENV'));
