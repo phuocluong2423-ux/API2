@@ -200,6 +200,33 @@ export async function getReplays() {
   return _getAll('replays');
 }
 
+// ─── Passive Deep Find site profiles (browser-local only) ─────────────────────
+
+export async function upsertSiteProfile(profile) {
+  if (!profile || typeof profile.host !== 'string' || !profile.host) return false;
+  const { siteProfiles = {} } = await chrome.storage.local.get('siteProfiles');
+  const next = { ...siteProfiles, [profile.host]: profile };
+  const entries = Object.entries(next).sort((a, b) => (b[1]?.capturedAt || 0) - (a[1]?.capturedAt || 0));
+  const bounded = Object.fromEntries(entries.slice(0, 25));
+  await chrome.storage.local.set({ siteProfiles: bounded });
+  return true;
+}
+
+export async function getSiteProfile(host) {
+  if (!host) return null;
+  const { siteProfiles = {} } = await chrome.storage.local.get('siteProfiles');
+  return siteProfiles[host] || null;
+}
+
+export async function getSiteProfiles() {
+  const { siteProfiles = {} } = await chrome.storage.local.get('siteProfiles');
+  return Object.values(siteProfiles).sort((a, b) => (b?.capturedAt || 0) - (a?.capturedAt || 0));
+}
+
+export async function clearSiteProfiles() {
+  await chrome.storage.local.set({ siteProfiles: {} });
+}
+
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
 export async function getStats() {
@@ -226,6 +253,7 @@ export async function getStats() {
 
 export async function clearAll() {
   await clearHot();
+  await clearSiteProfiles();
   await Promise.all(['captures','credentials','endpoints','graphql','replays'].map(_clear));
 }
 
