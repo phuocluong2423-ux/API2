@@ -13,7 +13,7 @@ import { replayRequest, getReplayLog, clearReplayLog,
          getChainedTokens, clearChainedTokens } from './replay.js';
 import { exportHAR, exportOpenAPI, exportPostman,
          exportCredentialsJSON, exportCredentialsEnv,
-         exportGraphQLSDL, downloadFile } from './exporter.js';
+         exportGraphQLSDL, exportDiscoveryReport, downloadFile } from './exporter.js';
 import { sha256, randomUUID, origin } from '../shared/utils.js';
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -354,6 +354,12 @@ async function _doExport(type, payload) {
         : '# No GraphQL schemas captured\n';
       downloadFile(content, 'age-schema.graphql', 'text/plain');
       return { ok: true };
+    }
+    case 'discovery_report': {
+      const [eps, schemas] = await Promise.all([getEndpoints(), getAllGraphQL()]);
+      const ops = schemas.flatMap(item => (item.operations || []).map(op => ({ ...op, host: item.host })));
+      downloadFile(exportDiscoveryReport(eps, ops, payload.host || ''), 'age-discovery-report.json', 'application/json');
+      return { ok: true, count: eps.length };
     }
     default: return { error: 'unknown export type' };
   }
