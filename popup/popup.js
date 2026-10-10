@@ -156,7 +156,7 @@ function _buildDeepFindItems(profile) {
   };
   const page = profile.page || {};
   const counts = profile.counts || {};
-  for (const visited of (profile.pages || []).slice(0, 100)) {
+  for (const visited of (profile.pages || []).slice(-50)) {
     add('Page', visited.title || visited.url, 'Visited by AGE while this browser page was active.',
       'Last observed: ' + (visited.lastSeen ? new Date(visited.lastSeen).toLocaleString() : 'unknown'), visited.url || '');
   }
@@ -169,6 +169,10 @@ function _buildDeepFindItems(profile) {
   for (const tech of (profile.technologies || []).slice(0, 40)) {
     add('Technology', tech.name, tech.evidence, 'Heuristic confidence: ' + (tech.confidence ?? '—') + '/100. This is an indicator, not definitive proof.', page.url || '');
   }
+  for (const signal of (profile.securitySignals || []).slice(0, 100)) {
+    add('Security', signal.title, signal.evidence, signal.detail, page.url || '', signal.severity || 'info');
+  }
+
   for (const route of (profile.routes || []).slice(0, 250)) {
     add('Route', route, 'Same-origin link path found in the rendered document.', 'A route candidate found from links; it may require authentication or application state.', route);
   }
@@ -201,9 +205,6 @@ function _buildDeepFindItems(profile) {
   }
   for (const name of (profile.dataAttributes || []).slice(0, 100)) {
     add('Attribute', name, 'DOM data-* attribute name detected.', 'Attribute names only; no attribute values are included.', page.url || '');
-  }
-  for (const signal of (profile.securitySignals || []).slice(0, 100)) {
-    add('Security', signal.title, signal.evidence, signal.detail, page.url || '', signal.severity || 'info');
   }
   if (assets.serviceWorkerControlled) {
     add('Manifest', 'Service worker controls this page', assets.serviceWorkerScope || 'Active controller detected',
