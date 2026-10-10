@@ -230,8 +230,12 @@ export async function upsertSiteProfile(profile) {
   };
   let pages = Array.isArray(previous.pages) ? previous.pages.slice() : [];
   const pageIndex = pages.findIndex(page => page?.url === incomingPage.url);
-  if (pageIndex >= 0) pages[pageIndex] = { ...pages[pageIndex], ...incomingPage };
-  else if (incomingPage.url) pages.push(incomingPage);
+  if (pageIndex >= 0) {
+    const existingPage = pages.splice(pageIndex, 1)[0];
+    pages.push({ ...existingPage, ...incomingPage });
+  } else if (incomingPage.url) {
+    pages.push(incomingPage);
+  }
   pages = pages.slice(-100);
 
   const oldAssets = previous.assets || {};
