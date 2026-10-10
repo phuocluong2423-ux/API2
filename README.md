@@ -56,6 +56,19 @@ The source analyzer combines several types of evidence:
 
 Each discovered endpoint can include its source, discovery method, evidence, a heuristic confidence score and an observed flag. Confidence is a **ranking signal, not a calibrated probability**; inspect the evidence before drawing conclusions.
 
+### Passive Deep Find site inventory
+
+The **Deep Find** view builds a broader inventory from the active page and its already-referenced resources. It can summarize:
+
+- Technology/framework clues inferred from known script paths, runtime markers and DOM signatures (heuristic; not a definitive fingerprint).
+- Script, stylesheet, image, iframe, icon and web-app-manifest references, plus external origins seen in the page's resource list.
+- Same-origin link routes and GraphQL operation names.
+- Form actions, methods and input field names/types only. Deep Find does **not** record form input values in this profile.
+- Local/session storage key names and approximate value lengths only. Storage values are omitted from the Deep Find profile.
+- Structured-data types, selected page metadata, service-worker control hints, DOM data-attribute names and passive configuration-review signals such as HTTP resource references, external form actions, and external scripts without SRI.
+
+Deep Find is passive: it does not crawl arbitrary paths, submit forms, brute-force routes, or perform reputation lookups. Findings are evidence-backed review hints, not confirmed vulnerabilities. Some observations concern the page or third-party assets it references; they are not Dark Web/Deep Web intelligence. Data is bounded and stored in the browser locally. Captures in the separate All/Auth/Secrets views retain their existing behavior, so treat those capture records as sensitive.
+
 ### Optional endpoint probing
 
 The Prober is disabled by default. When enabled, the current implementation can:
@@ -83,6 +96,7 @@ AGE can generate local downloads in these formats:
 | **OpenAPI 3.1** | Generate a draft description from captures and discovered paths |
 | **Postman Collection 2.1** | Continue manual API exploration in Postman |
 | **Discovery Report JSON** | Review endpoint candidates, source evidence, confidence and GraphQL operation names |
+| **Deep Find JSON** | Export a broader passive site inventory: technology clues, resource references, routes, form field names, storage key names and review signals |
 | **Credential JSON / .env** | Inventory credential-like values for an authorized assessment |
 | **GraphQL SDL** | Export a schema when AGE has captured introspection data |
 
@@ -122,12 +136,16 @@ Download or pull the latest source, then use **Reload** on the extension's detai
 3. **Browse normally.** Visit relevant routes and use the application's ordinary features; runtime requests are only observed when the application actually performs them.
 4. **Open AGE** and review the capture list and discovered-endpoint view.
 5. **Filter and inspect evidence.** Compare runtime observations with static candidates; do not assume every candidate is reachable.
+6. **Review Deep Find.** Inspect technology clues, linked assets, routes, forms (field names only), storage key names and passive security review signals for the active page.
 6. **Probe only when appropriate.** Confirm the target origin and keep the Prober disabled unless active checks are part of your authorized test plan.
 7. **Export the report** you need. Review exports for tokens, cookies, personal data and internal URLs before sharing them.
 
 For single-page applications, navigate through the app and allow AGE to observe newly loaded resources. A single initial page load is unlikely to reveal the full API surface.
 
 ## Understanding discovery results
+
+Deep Find keeps a separate page inventory from the endpoint list. It includes page metadata, framework clues, referenced assets and hosts, link routes, form structure, storage key names, and heuristic review signals. The report deliberately excludes form input values and storage values. It does not crawl external sites or query breach-data sources.
+
 
 | Evidence | What it means |
 | --- | --- |
@@ -163,7 +181,7 @@ flowchart TB
 | **manifest.json** | Chromium extension manifest |
 | **manifest.firefox.json** | Firefox-specific manifest configuration |
 | **inject/hooks.js** | Runtime request and connection observation |
-| **inject/analyzer.js** | Static source analysis and endpoint discovery |
+| **inject/analyzer.js** | Static source analysis, endpoint discovery and passive Deep Find inventory |
 | **content/bridge.js** | Main-world observation bridge |
 | **background/service-worker.js** | Message routing, coordination, probing, exports and lifecycle |
 | **background/storage.js** | Local capture, endpoint and credential storage |
