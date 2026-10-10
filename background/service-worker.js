@@ -231,13 +231,21 @@ async function _handleCapture(capture, sender) {
 
 // ─── Analysis Handler ─────────────────────────────────────────────────────────
 
-async function _handleAnalysis({ endpoints = [], graphqlOps = [], host } = {}, sender) {
-  // Store discovered endpoints
-  for (const ep of endpoints) {
-    const id = await sha256(ep.url + (ep.source || '') + host);
+async function _handleAnalysis({ endpoints = [], graphqlOps = [], host, discovery = {} } = {}, sender) {
+  // Persist provenance and confidence so the UI can distinguish static candidates
+  // from resources actually observed in the browser performance timeline.
+  for (const ep of endpoints.slice(0, 2000)) {
+    if (!ep || typeof ep.url !== 'string' || ep.url.length > 2048) continue;
+    const id = await sha256(ep.url + (ep.source || '') + (ep.host || host || ''));
     await upsertEndpoint({
       id, url: ep.url, source: ep.source, host: ep.host || host,
       type: ep.type || 'discovered', timestamp: Date.now(), tags: ['DISCOVERED'],
+      confidence: Number.isFinite(ep.confidence) ? ep.confidence : 45,
+      confidenceLabel: ep.confidenceLabel || 'low',
+      evidence: ep.evidence || ep.type || 'candidate',
+      evidenceSources: Array.isArray(ep.evidenceSources) ? ep.evidenceSources.slice(0, 12) : [ep.source || 'unknown'],
+      discoveryMethod: ep.discoveryMethod || 'static_source',
+      observed: ep.observed === true,
     });
   }
 
@@ -269,7 +277,7 @@ async function _handleAnalysis({ endpoints = [], graphqlOps = [], host } = {}, s
     }
   }
 
-  _broadcast('ANALYSIS_UPDATE', { endpointCount: endpoints.length, host });
+  _broadcast('ANALYSIS_UPDATE', { endpointCount: endpoints.length, host, discovery });
   return { ok: true };
 }
 
