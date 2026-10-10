@@ -328,7 +328,13 @@ export function exportDeepFindReport(profile) {
       forms: Array.isArray(profile.forms) ? profile.forms.length : 0,
       securitySignals: Array.isArray(profile.securitySignals) ? profile.securitySignals.length : 0,
       externalOrigins: Array.isArray(assets.externalOrigins) ? assets.externalOrigins.length : 0,
+      pagesScanned: Array.isArray(profile.pages) ? profile.pages.length : 0,
     },
+    pages: (Array.isArray(profile.pages) ? profile.pages : []).slice(0, 100).map(item => ({
+      url: safeString(item.url, 1024),
+      title: safeString(item.title, 200),
+      lastSeen: item.lastSeen || null,
+    })),
     counts: profile.counts && typeof profile.counts === 'object' ? profile.counts : {},
     technologies: (Array.isArray(profile.technologies) ? profile.technologies : []).slice(0, 40).map(item => ({
       name: safeString(item.name, 100),
@@ -364,10 +370,10 @@ export function exportDeepFindReport(profile) {
     })),
     storage: {
       localStorageKeys: (Array.isArray(storage.localStorageKeys) ? storage.localStorageKeys : []).slice(0, 100).map(item => ({
-        name: safeString(item.name, 120), length: Math.max(0, Math.min(1000000, Number(item.length) || 0)),
+        name: safeString(item.name, 120),
       })),
       sessionStorageKeys: (Array.isArray(storage.sessionStorageKeys) ? storage.sessionStorageKeys : []).slice(0, 100).map(item => ({
-        name: safeString(item.name, 120), length: Math.max(0, Math.min(1000000, Number(item.length) || 0)),
+        name: safeString(item.name, 120),
       })),
     },
     dataAttributes: safeList(profile.dataAttributes, 100),
