@@ -3,7 +3,7 @@
 
 We are not responsible for any consequences of how you use this tool. Please use it responsibly and do not use it for malicious purposes
 
-> A Chrome / Firefox MV3 browser extension that discovers, captures, classifies, and replays every API a web application uses — including hidden endpoints, GraphQL operations, WebSocket channels, and all credential material the browser holds.
+> A Chrome / Firefox MV3 extension for discovering API candidates, observing browser traffic, organizing endpoint evidence, and exporting documentation for authorized testing. Discovery is best-effort and cannot guarantee every server-side endpoint.
 
 ---
 
@@ -63,9 +63,9 @@ We are not responsible for any consequences of how you use this tool. Please use
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Channel Security
+### Message Boundary
 
-The MAIN-world scripts (`hooks.js`, `analyzer.js`) each generate a cryptographically random channel string at load time. They announce it via `postMessage({ type:'AGE_INIT', channel })`. The isolated-world bridge collects accepted channels into a `Set` and rejects any `postMessage` that does not carry an accepted channel. This prevents trivial interception by hostile page JavaScript.
+The page-world bridge is an untrusted-data boundary: it accepts only capture, analysis and storage-scan observations, and does not forward arbitrary page messages into privileged extension commands or return privileged responses to the page. The per-page channel handshake is not treated as a secret or a security boundary. Endpoint evidence is untrusted input and should be reviewed before probing or replaying.
 
 ---
 
@@ -81,15 +81,16 @@ The MAIN-world scripts (`hooks.js`, `analyzer.js`) each generate a cryptographic
 
 **Service-worker limitation:** Service-worker `fetch` events (respondWith) intercept requests before they reach the network. These cannot be hooked from the page world or isolated world. Mitigation: enable *Bypass for network* in DevTools → Application → Service Workers, or install AGE before the target SW is activated.
 
-### 2.2 Static Source Analyzer (`inject/analyzer.js`, MAIN world)
-Runs at `document_idle`, re-runs on SPA navigation. Scans:
-- Every `<script src>` and inline `<script>` (fetched fresh, not DOM `.textContent`)
-- Source maps: fetches `//# sourceMappingURL=` targets, analyzes `sourcesContent[]`
+### 2.2 Deep Source Analyzer (`inject/analyzer.js`, MAIN world)
+Runs at `document_idle`, re-runs on SPA navigation and bounded dynamic script insertion. It limits concurrent source reads and total analysis size. Scans:
+- External and inline `<script>` sources (with source-count and size budgets)
+- Source maps and embedded `sourcesContent[]`
+- Performance resource timing entries for likely API resources (observed resource evidence)
 - `localStorage`, `sessionStorage`, `window.*` globals (see `STATE_GLOBALS` in `shared/constants.js`)
 - `<meta>` content, `<link>` prefetch hints, HTML comments
 - `caches.keys()` Cache Storage manifests
 
-Extracts: absolute URLs, path literals, route-map keys, versioned prefixes, GraphQL operations (named + gql`` tagged), foreign hostnames.
+Extracts: absolute URLs, common API/RPC/GraphQL path patterns, base URL configuration, route-map keys, versioned prefixes, named GraphQL operations and foreign hostnames. Each endpoint records confidence, evidence source, discovery method and whether it was observed at runtime. These are heuristics; false positives and missed endpoints remain possible.
 
 ### 2.3 Live Endpoint Prober (`background/prober.js`)
 Off by default. Enable via popup toggle or settings. Runs in background context — **not subject to page CORS**.
@@ -121,7 +122,8 @@ Extracts and deduplicates (SHA-256) from every capture and storage scan:
 ### 2.6 Export Module (`background/exporter.js`)
 All exports are local `Blob` downloads — no server, no telemetry.
 - **HAR 1.2** — importable into Burp Suite, Charles, DevTools, Insomnia
-- **OpenAPI 3.1** — with both live-captured and static-discovered endpoints
+- **OpenAPI 3.1** — with live-captured and static-discovered endpoints
+- **Discovery Report JSON** — endpoint candidates with confidence/evidence metadata and GraphQL operation names; URL query secrets are redacted
 - **Postman Collection v2.1**
 - **Credential JSON** — full structured credential array
 - **Credential .env** — `KEY=value` flat format with JWT payload expansion
