@@ -2,6 +2,10 @@
 
 API Discovery Engine (AGE) is a local browser extension for observing web application traffic and discovering API candidates in resources available to the active browser page.
 
+## Deep Find privacy
+
+The Deep Find profile inventories page metadata, technology clues, linked resource URLs, same-origin routes, form structure, selected passive review signals and framework/service-worker hints. It accumulates information as the user browses more pages on a host. It does not automatically navigate links or send active probes. Form values, cookie values, and local/session storage values are not included in the Deep Find profile; storage key names only are recorded. Other existing AGE capture/credential views have separate behavior and may contain sensitive data.
+
 ## What AGE does not do
 
 - No Dark Web or Deep Web crawling.
