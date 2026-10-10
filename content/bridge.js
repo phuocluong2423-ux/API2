@@ -16,7 +16,8 @@
 (function () {
   'use strict';
 
-  // Set of MAIN-world channels that have completed handshake with this bridge
+  // This bridge accepts telemetry only. Page-world messages must never invoke
+  // privileged extension commands or receive extension responses.
   const _acceptedChannels = new Set();
 
   // ── Listen for messages from MAIN world (hooks.js, analyzer.js) ───────────
@@ -36,7 +37,8 @@
     // All other messages must carry a channel we've accepted
     if (!msg.channel || !_acceptedChannels.has(msg.channel)) return;
 
-    // Forward to background, stripping the postMessage channel field
+    // Strict allowlist: the page world can submit observations, never commands.
+    if (!['CAPTURE', 'ANALYSIS_RESULT', 'STORAGE_SCAN'].includes(msg.type)) return;
     _toBackground(msg);
   });
 
@@ -46,6 +48,7 @@
 
     // Map internal type names to SW router types
     const swMsg = _remap(fwd);
+    if (!swMsg) return;
 
     chrome.runtime.sendMessage(swMsg, (response) => {
       if (chrome.runtime.lastError) {
@@ -53,15 +56,7 @@
         setTimeout(() => chrome.runtime.sendMessage(swMsg).catch(() => {}), 150);
         return;
       }
-      // If the MAIN world registered a response listener, forward it
-      if (response !== undefined && msg.id !== undefined) {
-        window.postMessage({
-          type:     'AGE_RESPONSE',
-          channel:  msg.channel,
-          id:       msg.id,
-          response,
-        }, '*');
-      }
+      // Do not forward extension responses or sensitive data into the page world.
     });
   }
 
@@ -72,7 +67,7 @@
       ANALYSIS_RESULT:{ type: 'ANALYSIS_RESULT', payload: msg.payload },
       STORAGE_SCAN:   { type: 'STORAGE_SCAN',    payload: msg.payload },
     };
-    return map[msg.type] || msg;
+    return map[msg.type] || null;
   }
 
   // ── Trigger storage scan on DOMContentLoaded ─────────────────────────────
