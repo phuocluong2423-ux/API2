@@ -386,7 +386,7 @@
 
   // ── Passive Deep Find: page inventory, technology clues, routes and security signals
   // Never collect form values or storage values here; only structure and field names.
-  function _scanSiteProfile(pageHost) {
+  async function _scanSiteProfile(pageHost) {
     const originURL = location.origin;
     const safeURL = (raw, keepOrigin = true) => {
       try {
