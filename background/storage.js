@@ -290,7 +290,7 @@ export async function upsertSiteProfile(profile) {
   };
   const next = { ...siteProfiles, [profile.host]: merged };
   const entries = Object.entries(next).sort((a, b) => (b[1]?.capturedAt || 0) - (a[1]?.capturedAt || 0));
-  await chrome.storage.local.set({ siteProfiles: Object.fromEntries(entries.slice(0, 25)) });
+  await chrome.storage.local.set({ siteProfiles: Object.fromEntries(entries.slice(0, 12)) });
   return true;
 }
 
