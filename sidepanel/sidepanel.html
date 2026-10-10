@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AGE — Side Panel</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+<div id="sp-app">
+
+  <header id="sp-header">
+    <svg width="20" height="20" viewBox="0 0 32 32" fill="none" style="filter:drop-shadow(0 0 5px #00ffc8)">
+      <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" fill="none" stroke="#00ffc8" stroke-width="1.5" opacity="0.5"/>
+      <path d="M16 7 L16 25 M8 11.5 L24 20.5 M8 20.5 L24 11.5" stroke="#00ffc8" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="16" cy="16" r="3" fill="#00ffc8" opacity="0.9"/>
+    </svg>
+    <span class="sp-brand">AGE</span>
+    <div class="sp-stats">
+      <div class="sp-stat"><span class="sp-stat-val" id="sp-stat-c">0</span><span class="sp-stat-label">Cap</span></div>
+      <div class="sp-stat"><span class="sp-stat-val" id="sp-stat-k">0</span><span class="sp-stat-label">Keys</span></div>
+      <div class="sp-stat"><span class="sp-stat-val" id="sp-stat-e">0</span><span class="sp-stat-label">Eps</span></div>
+    </div>
+    <button class="sp-btn" id="sp-btn-prober">⚡</button>
+    <button class="sp-btn danger" id="sp-btn-clear" title="Clear captures">✕</button>
+  </header>
+
+  <div id="sp-toolbar">
+    <nav id="sp-tabs">
+      <div class="sp-tab active" data-tab="all">All</div>
+      <div class="sp-tab" data-tab="auth">Auth</div>
+      <div class="sp-tab" data-tab="secrets">Secrets</div>
+      <div class="sp-tab" data-tab="tokens">Tokens</div>
+      <div class="sp-tab" data-tab="discovered">Disc</div>
+      <div class="sp-tab" data-tab="probed">Probed</div>
+    </nav>
+    <div id="sp-search-wrap">
+      <span class="sp-search-icon">⌕</span>
+      <input type="text" id="sp-search" placeholder="Filter…" autocomplete="off" spellcheck="false">
+    </div>
+    <button class="sp-btn" id="sp-btn-har">HAR</button>
+    <button class="sp-btn" id="sp-btn-creds">Creds</button>
+  </div>
+
+  <div id="sp-list" role="list"></div>
+
+</div>
+
+<div id="sp-toast"></div>
+
+<script type="module" src="sidepanel.js"></script>
+</body>
+</html>

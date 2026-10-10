@@ -1,0 +1,61 @@
+{
+  "manifest_version": 3,
+  "name": "API Extraction Engine",
+  "short_name": "AGE",
+  "version": "1.0.0",
+  "description": "Discovers, captures, classifies, and replays every API a web application uses — including hidden endpoints, GraphQL operations, WebSocket channels, and credential material.",
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "age@extraction.engine",
+      "strict_min_version": "128.0"
+    }
+  },
+
+  "permissions": [
+    "storage",
+    "cookies",
+    "scripting",
+    "downloads",
+    "nativeMessaging"
+  ],
+
+  "host_permissions": ["<all_urls>"],
+
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches":                 ["<all_urls>"],
+      "js":                      ["content/bridge.js"],
+      "run_at":                  "document_start",
+      "all_frames":              true,
+      "match_origin_as_fallback": true
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "API Extraction Engine",
+    "default_icon": {
+      "16":  "icons/icon16.png",
+      "48":  "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "web_accessible_resources": [],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none';"
+  }
+}

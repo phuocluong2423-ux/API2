@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Extraction Engine</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <header id="header">
+    <svg class="logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" fill="none" stroke="#00ffc8" stroke-width="1.5" opacity="0.5"/>
+      <path d="M16 7 L16 25 M8 11.5 L24 20.5 M8 20.5 L24 11.5" stroke="#00ffc8" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="16" cy="16" r="3" fill="#00ffc8" opacity="0.9"/>
+    </svg>
+    <span class="brand">AGE <span>API Extraction Engine v1.0</span></span>
+
+    <div id="stats-bar">
+      <div class="stat">
+        <span class="stat-val" id="stat-captures">0</span>
+        <span class="stat-label">Captures</span>
+      </div>
+      <div class="stat">
+        <span class="stat-val" id="stat-hosts">0</span>
+        <span class="stat-label">Hosts</span>
+      </div>
+      <div class="stat">
+        <span class="stat-val has-creds" id="stat-creds">0</span>
+        <span class="stat-label">Credentials</span>
+      </div>
+      <div class="stat">
+        <span class="stat-val has-endpoints" id="stat-endpoints">0</span>
+        <span class="stat-label">Endpoints</span>
+      </div>
+      <div id="rec-dot" title="Recording active"></div>
+    </div>
+  </header>
+
+  <!-- ── Toolbar ────────────────────────────────────────────────────────── -->
+  <div id="toolbar">
+    <!-- Tabs -->
+    <nav id="tabs" role="tablist">
+      <div class="tab active" data-tab="all"        role="tab" id="tab-all">All <span class="badge" id="badge-all">0</span></div>
+      <div class="tab"        data-tab="auth"       role="tab" id="tab-auth">Auth <span class="badge" id="badge-auth">0</span></div>
+      <div class="tab"        data-tab="secrets"    role="tab" id="tab-secrets">Secrets <span class="badge" id="badge-secrets">0</span></div>
+      <div class="tab"        data-tab="tokens"     role="tab" id="tab-tokens">Tokens <span class="badge" id="badge-tokens">0</span></div>
+      <div class="tab"        data-tab="storage"    role="tab" id="tab-storage">Storage <span class="badge" id="badge-storage">0</span></div>
+      <div class="tab"        data-tab="discovered" role="tab" id="tab-discovered">Discovered <span class="badge" id="badge-discovered">0</span></div>
+      <div class="tab"        data-tab="probed"     role="tab" id="tab-probed">Probed <span class="badge" id="badge-probed">0</span></div>
+    </nav>
+
+    <!-- Search -->
+    <div id="search-wrap">
+      <span class="search-icon">⌕</span>
+      <input type="text" id="search" placeholder="Filter by URL, method, status, token…" autocomplete="off" spellcheck="false">
+    </div>
+
+    <!-- Action buttons -->
+    <button class="btn" id="btn-prober" title="Toggle live endpoint prober">⚡ Prober</button>
+    <button class="btn" id="btn-settings" title="Settings">⚙</button>
+    <button class="btn danger" id="btn-clear" title="Clear captures">✕</button>
+  </div>
+
+  <!-- ── Capture List ────────────────────────────────────────────────────── -->
+  <div id="list-wrap" role="list" aria-label="API captures">
+    <div id="empty-state">
+      <div class="empty-icon">📡</div>
+      <p>No captures yet</p>
+      <small>Browse any page to start intercepting API calls</small>
+    </div>
+    <!-- Rows injected by popup.js -->
+  </div>
+
+  <!-- ── Footer / Export Bar ───────────────────────────────────────────────── -->
+  <footer id="footer">
+    <span class="footer-label">Export:</span>
+    <button class="btn" id="btn-export-har"     title="Download HAR 1.2">HAR</button>
+    <button class="btn" id="btn-export-openapi" title="Download OpenAPI 3.1">OpenAPI</button>
+    <button class="btn" id="btn-export-postman" title="Download Postman v2.1">Postman</button>
+    <button class="btn" id="btn-export-creds"   title="Download credentials JSON">Creds.JSON</button>
+    <button class="btn" id="btn-export-env"     title="Download credentials .env">.env</button>
+    <button class="btn" id="btn-export-gql"     title="Download GraphQL SDL">GQL SDL</button>
+
+    <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
+      <label style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--text2);cursor:pointer;">
+        <input type="checkbox" id="chk-redacted" style="accent-color:var(--cyan)"> Redact
+      </label>
+      <button class="btn" id="btn-sidepanel" title="Open side panel">⟵ Panel</button>
+    </div>
+  </footer>
+
+</div>
+
+<!-- ── Settings Panel (overlay) ─────────────────────────────────────────── -->
+<div id="settings-panel" role="dialog" aria-label="Settings">
+  <div class="settings-header">
+    <h2>⚙ Settings</h2>
+    <button class="btn" id="btn-close-settings">✕ Close</button>
+  </div>
+
+  <!-- Prober -->
+  <div class="settings-group">
+    <h3>Live Endpoint Prober</h3>
+    <div class="setting-row">
+      <div><div class="setting-label">Enable Prober</div><div class="setting-hint">Sends HEAD/OPTIONS to discovered endpoints</div></div>
+      <label class="toggle"><input type="checkbox" id="s-prober-enabled"><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <div><div class="setting-label">Delay (ms)</div><div class="setting-hint">Rate limit between probes</div></div>
+      <input type="number" class="setting-input" id="s-prober-delay" value="250" min="0" max="5000">
+    </div>
+    <div class="setting-row">
+      <div><div class="setting-label">Aggressive Mode</div><div class="setting-hint">Also probe destructive-looking paths (/delete, /drop…)</div></div>
+      <label class="toggle"><input type="checkbox" id="s-aggressive"><span class="toggle-slider"></span></label>
+    </div>
+  </div>
+
+  <!-- Capture -->
+  <div class="settings-group">
+    <h3>Capture</h3>
+    <div class="setting-row">
+      <div><div class="setting-label">Body Cap (bytes)</div><div class="setting-hint">Truncate request/response bodies</div></div>
+      <input type="number" class="setting-input" id="s-body-cap" value="20480" min="1024" max="1048576">
+    </div>
+    <div class="setting-row">
+      <div><div class="setting-label">Hot Buffer Size</div><div class="setting-hint">Max captures in fast ring buffer</div></div>
+      <input type="number" class="setting-input" id="s-hot-max" value="2000" min="100" max="10000">
+    </div>
+  </div>
+
+  <!-- Anonymity -->
+  <div class="settings-group">
+    <h3>Anonymity Layer</h3>
+    <div class="setting-row">
+      <div><div class="setting-label">Strip Identifying Headers</div><div class="setting-hint">Remove Referer, Origin, Sec-Fetch-*, User-Agent from prober/replay</div></div>
+      <label class="toggle"><input type="checkbox" id="s-strip-anon" checked><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <div><div class="setting-label">Proxy URL</div><div class="setting-hint">HTTP or SOCKS5 proxy for all extension requests</div></div>
+      <input type="text" class="setting-input" id="s-proxy-url" placeholder="http://127.0.0.1:8080">
+    </div>
+    <div class="setting-row">
+      <div><div class="setting-label">User-Agent Rotation</div><div class="setting-hint">Newline-separated UA strings</div></div>
+    </div>
+    <textarea class="setting-input" id="s-user-agents" rows="3"
+              style="width:100%;height:64px;resize:vertical;font-size:10px;"
+              placeholder="One User-Agent per line (leave blank for browser default)"></textarea>
+  </div>
+
+  <!-- Export -->
+  <div class="settings-group">
+    <h3>Export</h3>
+    <div class="setting-row">
+      <div><div class="setting-label">Redact by Default</div><div class="setting-hint">Mask credentials in all exports</div></div>
+      <label class="toggle"><input type="checkbox" id="s-redacted"><span class="toggle-slider"></span></label>
+    </div>
+  </div>
+
+  <button class="btn primary" id="btn-save-settings" style="width:100%">💾 Save Settings</button>
+</div>
+
+<!-- ── Toast ─────────────────────────────────────────────────────────────── -->
+<div id="toast"></div>
+
+<script type="module" src="popup.js"></script>
+</body>
+</html>
