@@ -319,7 +319,7 @@ async function _doExport(type, payload) {
     }
     case 'openapi': {
       const [captures, eps] = await Promise.all([getAllCaptures(), getEndpoints()]);
-      downloadFile(exportOpenAPI(captures, eps), 'age-openapi.json', 'application/json');
+      downloadFile(exportOpenAPI(captures, eps, redacted), 'age-openapi.json', 'application/json');
       return { ok: true };
     }
     case 'postman': {
