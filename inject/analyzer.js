@@ -53,7 +53,7 @@
     const decodedText = text
       .replace(/\\u002f/gi, '/')
       .replace(/\\x2f/gi, '/')
-      .replace(/\\\//g, '/')
+      .replace(/\\+\//g, '/'),
       .replace(/\\u003a/gi, ':')
       .replace(/\\x3a/gi, ':');
     const scanTexts = decodedText === text ? [text] : [text, decodedText];
@@ -80,11 +80,6 @@
       // Absolute URL literals.
       for (const m of sourceText.matchAll(/https?:\/\/[^\s"'<>\x60\])}\\,;]{4,}/g)) add(m[0], 'absolute');
 
-      // Common request call sites, including client.get('/resource') and fetch('/resource').
-      for (const m of sourceText.matchAll(/\b(?:fetch|open|request|get|post|put|patch|delete|head|options|query|mutate)\s*\(\s*['"\x60]((?:https?:\/\/|\/)[A-Za-z0-9_\-./{}\[\]:?=&%#@!$*+~]{1,900})['"\x60]/gi)) {
-        add(m[1], 'request_call');
-      }
-
       // Framework/router declarations such as router.get('/users') and app.use('/api').
       for (const m of sourceText.matchAll(/\b(?:router|app|server|route|fastify|express|apiRouter)\s*\.\s*(?:get|post|put|patch|delete|options|head|all|use|route)\s*\(\s*['"\x60](\/[^'"\x60\s]{1,900})['"\x60]/gi)) {
         add(m[1], 'framework_route');
@@ -95,6 +90,12 @@
         const path = m[2].startsWith('/') ? m[2] : '/' + m[2];
         add(path, 'framework_route');
       }
+
+      // Common request call sites, including client.get('/resource') and fetch('/resource').
+      for (const m of sourceText.matchAll(/\b(?:fetch|open|request|get|post|put|patch|delete|head|options|query|mutate)\s*\(\s*['"\x60]((?:https?:\/\/|\/)[A-Za-z0-9_\-./{}\[\]:?=&%#@!$*+~]{1,900})['"\x60]/gi)) {
+        add(m[1], 'request_call');
+      }
+
 
       // URL/path-like values attached to meaningful configuration keys.
       for (const m of sourceText.matchAll(/(?:fetch|axios|got|request|http(?:Client|Service|s)?|url|endpoint|api|graphql|baseURL?|apiBaseURL|apiUrl|route|path|href|uri|resource)\s*[=:(,+<{]\s*['"\x60]?((?:https?:\/\/|\/)\/*[A-Za-z0-9_\-./{}\[\]:?=&%#@!$*+~]{1,1024})/gi)) {
@@ -403,7 +404,8 @@
     };
     const uniqStrings = (values, cap = 100) => Array.from(new Set(values.filter(Boolean))).slice(0, cap);
     const getMeta = name => {
-      const el = document.querySelector('meta[name="' + name.replace(/["\\]/g, '') + '"]');
+      const cleanName = name.replace(/["\\]/g, '');
+      const el = document.querySelector('meta[name="' + cleanName + '"],meta[property="' + cleanName + '"]');
       return String(el?.content || '').trim().slice(0, 300);
     };
     const assetList = (selector, attr, cap = 100) => {
@@ -465,6 +467,11 @@
     let newTabWithoutNoopener = 0;
     for (const a of Array.from(document.querySelectorAll('a[href]')).slice(0, 1000)) {
       const raw = a.getAttribute('href') || '';
+      if (raw.startsWith('#/')) {
+        const hashRoute = raw.slice(1).split(/[?#]/)[0].slice(0, 300);
+        if (hashRoute.startsWith('/') && !linkSeen.has(hashRoute)) { linkSeen.add(hashRoute); routes.push(hashRoute); }
+        continue;
+      }
       const url = safeURL(raw, true);
       if (!url) continue;
       try {
