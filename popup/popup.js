@@ -79,6 +79,8 @@ function decodeJWT(token) {
 let _allCaptures    = [];
 let _credentials    = [];
 let _endpoints      = [];
+let _siteProfile    = null;
+let _activeHost     = '';
 let _stats          = {};
 let _settings       = {};
 let _activeTab      = 'all';
@@ -98,15 +100,23 @@ async function init() {
 
 async function refreshAll() {
   try {
-    const [hot, creds, eps, stats] = await Promise.all([
+    let activeHost = '';
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.url) activeHost = new URL(tab.url).hostname;
+    } catch { /* the active tab may be a browser-internal page */ }
+    const [hot, creds, eps, stats, profile] = await Promise.all([
       sw('GET_CAPTURES', { pageSize: 500 }),
       sw('GET_CREDENTIALS'),
       sw('GET_ENDPOINTS'),
       sw('GET_STATS'),
+      activeHost ? sw('GET_SITE_PROFILE', { host: activeHost }) : Promise.resolve(null),
     ]);
     _allCaptures = Array.isArray(hot)   ? hot   : [];
     _credentials = Array.isArray(creds) ? creds : [];
     _endpoints   = Array.isArray(eps)   ? eps   : [];
+    _siteProfile = profile && typeof profile === 'object' ? profile : null;
+    _activeHost  = activeHost;
     _stats       = stats || {};
     render();
     updateStats();
@@ -121,10 +131,102 @@ async function loadSettings() {
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
+// Convert a passive Deep Find profile into evidence-backed, reviewable rows.
+// This view contains field names and storage key names only, never their values.
+function _buildDeepFindItems(profile) {
+  if (!profile || typeof profile !== 'object') return [];
+  const items = [];
+  const add = (category, title, evidence, detail, url = '', severity = 'info') => {
+    if (items.length >= 600) return;
+    const normalized = String(category || 'Finding').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const stable = String(url || title || items.length).toLowerCase().replace(/[^a-z0-9/._:-]+/g, '-').slice(0, 100);
+    const methodMap = { Technology: 'TECH', Route: 'ROUTE', Script: 'JS', Style: 'CSS', Image: 'IMG', Frame: 'FRAME', Manifest: 'APP', Form: 'FORM', Storage: 'STORE', Security: 'SEC', Domain: 'HOST', Metadata: 'META', Attribute: 'ATTR' };
+    items.push({
+      id: 'deep-' + normalized + '-' + stable + '-' + items.length,
+      _isFinding: true,
+      category: String(category || 'Finding').slice(0, 40),
+      title: String(title || 'Untitled finding').slice(0, 180),
+      evidence: String(evidence || '').slice(0, 1024),
+      detail: String(detail || '').slice(0, 1200),
+      url: String(url || profile.page?.url || ''),
+      severity: ['info', 'review', 'high'].includes(severity) ? severity : 'info',
+      method: methodMap[category] || 'FIND',
+      tags: [String(severity || 'info').toUpperCase()],
+    });
+  };
+  const page = profile.page || {};
+  const counts = profile.counts || {};
+  add('Metadata', page.title || profile.host, page.url || profile.host,
+    'Description: ' + (page.description || '—') + '\nLanguage: ' + (page.language || '—') +
+    '\nCanonical: ' + (page.canonical || '—') + '\nGenerator: ' + (page.generator || '—') +
+    '\nRobots: ' + (page.robots || '—') + '\nCSP meta element: ' +
+    (page.cspMetaPresent ? 'present' : 'not detected (does not prove the response header is absent)'),
+    page.url || '');
+  for (const tech of (profile.technologies || []).slice(0, 40)) {
+    add('Technology', tech.name, tech.evidence, 'Heuristic confidence: ' + (tech.confidence ?? '—') + '/100. This is an indicator, not definitive proof.', page.url || '');
+  }
+  for (const route of (profile.routes || []).slice(0, 250)) {
+    add('Route', route, 'Same-origin link path found in the rendered document.', 'A route candidate found from links; it may require authentication or application state.', route);
+  }
+  const assets = profile.assets || {};
+  for (const [group, category] of [['scripts','Script'],['styles','Style'],['images','Image'],['frames','Frame'],['manifests','Manifest'],['icons','Image']]) {
+    for (const url of (assets[group] || []).slice(0, category === 'Script' ? 120 : 60)) {
+      add(category, url, 'Resource reference found in the active page (' + group + ').', 'Reference-only discovery. Deep Find does not automatically probe this resource.', url);
+    }
+  }
+  for (const origin of (assets.externalOrigins || []).slice(0, 100)) {
+    add('Domain', origin, 'External origin referenced by page resources.', 'Review whether this third-party origin is expected. No reputation or threat-intelligence lookup was performed.', origin);
+  }
+  for (const form of (profile.forms || []).slice(0, 80)) {
+    const fieldList = (form.fields || []).map(field =>
+      (field.name || '(unnamed)') + ' [' + (field.type || 'field') + ']' + (field.required ? ' required' : '')
+    ).join('\n');
+    const title = (form.method || 'GET') + ' ' + (form.action || page.url || '');
+    add('Form', title, 'Fields: ' + (form.fieldCount ?? (form.fields || []).length) +
+      '; password field: ' + (form.hasPassword ? 'yes' : 'no') + '; external action: ' + (form.externalAction ? 'yes' : 'no'),
+      'Field names and types only; input values are intentionally not collected in Deep Find.\n' + (fieldList || '(no named fields)'),
+      form.action || page.url || '', form.externalAction ? 'review' : 'info');
+  }
+  for (const item of (profile.storage?.localStorageKeys || []).slice(0, 100)) {
+    add('Storage', 'localStorage: ' + item.name, 'Approximate stored value length: ' + item.length + ' characters',
+      'Only the key name and value length are included in Deep Find; the value content is omitted.', page.url || '');
+  }
+  for (const item of (profile.storage?.sessionStorageKeys || []).slice(0, 100)) {
+    add('Storage', 'sessionStorage: ' + item.name, 'Approximate stored value length: ' + item.length + ' characters',
+      'Only the key name and value length are included in Deep Find; the value content is omitted.', page.url || '');
+  }
+  for (const name of (profile.dataAttributes || []).slice(0, 100)) {
+    add('Attribute', name, 'DOM data-* attribute name detected.', 'Attribute names only; no attribute values are included.', page.url || '');
+  }
+  for (const signal of (profile.securitySignals || []).slice(0, 100)) {
+    add('Security', signal.title, signal.evidence, signal.detail, page.url || '', signal.severity || 'info');
+  }
+  if (assets.serviceWorkerControlled) {
+    add('Manifest', 'Service worker controls this page', assets.serviceWorkerScope || 'Active controller detected',
+      'This indicates a service worker controls the document; it is not a security defect by itself.', assets.serviceWorkerScope || page.url || '');
+  }
+  add('Metadata', 'Inventory summary',
+    (counts.scripts || 0) + ' scripts · ' + (counts.styles || 0) + ' styles · ' + (counts.images || 0) +
+    ' images · ' + (counts.routes || 0) + ' routes · ' + (counts.forms || 0) +
+    ' forms · ' + (counts.externalOrigins || 0) + ' external origins',
+    'Storage keys listed: ' + (counts.storageKeys || 0) + '. Resource timing entries seen: ' +
+    (assets.performanceResources || 0) + '. Captured: ' +
+    (profile.capturedAt ? new Date(profile.capturedAt).toLocaleString() : 'unknown') + '.',
+    page.url || '');
+  return items;
+}
+
 function getFilteredItems() {
   const q = _searchQuery.trim().toLowerCase();
 
   switch (_activeTab) {
+    case 'deepfind':
+      return _buildDeepFindItems(_siteProfile).filter(item => {
+        if (!q) return true;
+        return [item.category, item.title, item.evidence, item.detail, item.url]
+          .some(value => String(value || '').toLowerCase().includes(q));
+      });
+
     case 'discovered':
       return _endpoints.filter(ep => {
         if (q && !ep.url?.toLowerCase().includes(q)) return false;
@@ -193,7 +295,7 @@ function render() {
       <div id="empty-state">
         <div class="empty-icon">📡</div>
         <p>${_activeTab === 'all' ? 'No captures yet' : 'Nothing in this tab'}</p>
-        <small>${_activeTab === 'all' ? 'Browse any page to start intercepting API calls' : 'Try a different filter'}</small>
+        <small>${_activeTab === 'all' ? 'Browse any page to start intercepting API calls' : _activeTab === 'deepfind' && !_siteProfile ? 'Open a website, reload it with AGE enabled, then open Deep Find again' : 'Try a different filter'}</small>
       </div>`;
     return;
   }
@@ -279,6 +381,7 @@ function renderRow(item) {
   const credCount = item.credentialCount || 0;
   const isCred   = item._isCred;
   const isEndpoint = item._isEndpoint;
+  const isFinding = item._isFinding;
   const replay   = _replayResults[id];
 
   const methodClass = `method-${method}`;
@@ -295,7 +398,7 @@ function renderRow(item) {
   const tagsHtml = tags.map(t => `<span class="tag tag-${t}">${t}</span>`).join('');
 
   let actionBtns = '';
-  if (!isCred && !isEndpoint) {
+  if (!isCred && !isEndpoint && !isFinding) {
     actionBtns = `
       <button class="btn btn-copy-curl" data-id="${escapeHTML(id)}" title="Copy as curl">⎘ curl</button>
       <button class="btn btn-replay" data-id="${escapeHTML(id)}" title="Replay this request">↻ Replay</button>`;
@@ -305,14 +408,16 @@ function renderRow(item) {
   }
 
   // Build detail panel
-  const detailHtml = renderDetailPanel(item, id, replay, isCred, isEndpoint);
+  const detailHtml = renderDetailPanel(item, id, replay, isCred, isEndpoint, isFinding);
+  const rowHost = isFinding ? item.category : host;
+  const rowPath = isFinding ? item.title : path;
 
   return `
     <div class="capture-row" data-id="${escapeHTML(id)}" role="listitem">
       <span class="method-badge ${methodClass}">${escapeHTML(method)}</span>
       ${statusHtml}
       <span class="capture-url truncate" title="${escapeHTML(item.url || '')}">
-        <span class="host">${escapeHTML(host)}</span><span class="path">${escapeHTML(path)}</span>
+        <span class="host">${escapeHTML(rowHost)}</span><span class="path">${escapeHTML(rowPath)}</span>
       </span>
       <div class="tags">${tagsHtml}</div>
       ${credBadge}
@@ -321,7 +426,7 @@ function renderRow(item) {
     ${detailHtml}`;
 }
 
-function renderDetailPanel(item, id, replay, isCred, isEndpoint) {
+function renderDetailPanel(item, id, replay, isCred, isEndpoint, isFinding = false) {
   const url = item.url || '';
 
   if (isCred) {
@@ -366,6 +471,16 @@ function renderDetailPanel(item, id, replay, isCred, isEndpoint) {
           </div>
         </div>
       </div>`;
+  }
+
+  if (isFinding) {
+    return '<div class="detail-panel" data-panel="' + escapeHTML(id) + '">' +
+      '<div class="detail-grid"><div class="detail-section full">' +
+      '<div class="section-title">Deep Find · ' + escapeHTML(item.category) + ' · ' + escapeHTML((item.severity || 'info').toUpperCase()) + '</div>' +
+      '<div class="section-body">Evidence: ' + escapeHTML(item.evidence || '—') +
+      '\n\nDetails: ' + escapeHTML(item.detail || '—') +
+      '\n\nPage: ' + escapeHTML(_siteProfile?.page?.url || _siteProfile?.host || '—') +
+      '</div></div></div></div>';
   }
 
   // Full capture detail
@@ -455,6 +570,7 @@ function updateBadges(filteredCount) {
   $('badge-storage').textContent   = storeCount;
   $('badge-discovered').textContent = discCount;
   $('badge-probed').textContent    = probCount;
+  $('badge-deepfind').textContent  = _buildDeepFindItems(_siteProfile).length;
 }
 
 // ── Event Binding ──────────────────────────────────────────────────────────────
@@ -521,6 +637,7 @@ function bindEvents() {
   $('btn-export-har').addEventListener('click',     () => doExport('EXPORT_HAR'));
   $('btn-export-openapi').addEventListener('click', () => doExport('EXPORT_OPENAPI'));
   $('btn-export-report').addEventListener('click', () => doExport('EXPORT_DISCOVERY_REPORT'));
+  $('btn-export-deepfind').addEventListener('click', () => doExport('EXPORT_DEEP_FIND_REPORT', { host: _siteProfile?.host || _activeHost }));
   $('btn-export-postman').addEventListener('click', () => doExport('EXPORT_POSTMAN'));
   $('btn-export-creds').addEventListener('click',   () => doExport('EXPORT_CREDS_JSON'));
   $('btn-export-env').addEventListener('click',     () => doExport('EXPORT_CREDS_ENV'));
@@ -538,10 +655,11 @@ function bindEvents() {
   });
 }
 
-async function doExport(type) {
+async function doExport(type, extraPayload = {}) {
   const redacted = $('chk-redacted').checked;
   try {
-    await sw(type, { redacted });
+    const result = await sw(type, { redacted, ...extraPayload });
+    if (result?.ok === false) throw new Error(result.error || 'Export could not be completed');
     toast('✓ Export downloaded');
   } catch (err) {
     toast('Export failed: ' + err.message, 3000);
@@ -598,6 +716,7 @@ function listenForUpdates() {
         }, 100);
         break;
       case 'ANALYSIS_UPDATE':
+      case 'SITE_PROFILE_UPDATE':
       case 'PROBE_UPDATE':
       case 'STORAGE_SCAN_COMPLETE':
         refreshAll();
