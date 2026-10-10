@@ -53,7 +53,7 @@
     const decodedText = text
       .replace(/\\u002f/gi, '/')
       .replace(/\\x2f/gi, '/')
-      .replace(/\\+\//g, '/'),
+      .replace(/\\+\//g, '/')
       .replace(/\\u003a/gi, ':')
       .replace(/\\x3a/gi, ':');
     const scanTexts = decodedText === text ? [text] : [text, decodedText];
