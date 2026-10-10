@@ -287,6 +287,108 @@ export function exportDiscoveryReport(endpoints, graphqlOps = [], host = '') {
   }, null, 2);
 }
 
+// ─── Deep Find site inventory report ───────────────────────────────────────────
+export function exportDeepFindReport(profile) {
+  const safeString = (v, max = 500) => String(v ?? '').slice(0, max);
+  const safeList = (values, cap = 100) => (Array.isArray(values) ? values : [])
+    .filter(v => typeof v === 'string')
+    .map(v => safeString(v, 1024))
+    .slice(0, cap);
+  if (!profile || typeof profile !== 'object') {
+    return JSON.stringify({ schemaVersion: 1, generator: 'API Extraction Engine', error: 'No Deep Find profile available for this site' }, null, 2);
+  }
+  const page = profile.page || {};
+  const assets = profile.assets || {};
+  const storage = profile.storage || {};
+  const safeProfile = {
+    schemaVersion: 1,
+    generator: 'API Extraction Engine — Deep Find',
+    generatedAt: new Date().toISOString(),
+    host: safeString(profile.host, 253),
+    capturedAt: profile.capturedAt || null,
+    page: {
+      url: safeString(page.url, 1024),
+      title: safeString(page.title, 200),
+      language: safeString(page.language, 30),
+      description: safeString(page.description, 300),
+      generator: safeString(page.generator, 300),
+      canonical: safeString(page.canonical, 1024),
+      robots: safeString(page.robots, 300),
+      referrerPolicy: safeString(page.referrerPolicy, 300),
+      viewport: safeString(page.viewport, 300),
+      themeColor: safeString(page.themeColor, 80),
+      openGraphTitle: safeString(page.openGraphTitle, 200),
+      openGraphType: safeString(page.openGraphType, 80),
+      cspMetaPresent: page.cspMetaPresent === true,
+      structuredDataTypes: safeList(page.structuredDataTypes, 50),
+    },
+    summary: {
+      technologies: Array.isArray(profile.technologies) ? profile.technologies.length : 0,
+      routes: Array.isArray(profile.routes) ? profile.routes.length : 0,
+      forms: Array.isArray(profile.forms) ? profile.forms.length : 0,
+      securitySignals: Array.isArray(profile.securitySignals) ? profile.securitySignals.length : 0,
+      externalOrigins: Array.isArray(assets.externalOrigins) ? assets.externalOrigins.length : 0,
+      pagesScanned: Array.isArray(profile.pages) ? profile.pages.length : 0,
+    },
+    pages: (Array.isArray(profile.pages) ? profile.pages : []).slice(0, 100).map(item => ({
+      url: safeString(item.url, 1024),
+      title: safeString(item.title, 200),
+      lastSeen: item.lastSeen || null,
+    })),
+    counts: profile.counts && typeof profile.counts === 'object' ? profile.counts : {},
+    technologies: (Array.isArray(profile.technologies) ? profile.technologies : []).slice(0, 40).map(item => ({
+      name: safeString(item.name, 100),
+      evidence: safeString(item.evidence, 180),
+      confidence: Math.max(0, Math.min(100, Number(item.confidence) || 0)),
+    })),
+    assets: {
+      scripts: safeList(assets.scripts, 120),
+      styles: safeList(assets.styles, 100),
+      images: safeList(assets.images, 100),
+      frames: safeList(assets.frames, 50),
+      manifests: safeList(assets.manifests, 10),
+      icons: safeList(assets.icons, 20),
+      serviceWorkerControlled: assets.serviceWorkerControlled === true,
+      serviceWorkerScope: safeString(assets.serviceWorkerScope, 1024),
+      externalOrigins: safeList(assets.externalOrigins, 100),
+      performanceResources: Math.max(0, Math.min(500, Number(assets.performanceResources) || 0)),
+    },
+    routes: safeList(profile.routes, 250),
+    forms: (Array.isArray(profile.forms) ? profile.forms : []).slice(0, 80).map(form => ({
+      action: safeString(form.action, 1024),
+      method: safeString(form.method, 12).toUpperCase(),
+      externalAction: form.externalAction === true,
+      hasPassword: form.hasPassword === true,
+      fieldCount: Math.max(0, Math.min(40, Number(form.fieldCount) || 0)),
+      // Deep Find intentionally exports field names and types only; never input values.
+      fields: (Array.isArray(form.fields) ? form.fields : []).slice(0, 40).map(field => ({
+        name: safeString(field.name, 100),
+        type: safeString(field.type, 30),
+        required: field.required === true,
+        autocomplete: safeString(field.autocomplete, 40),
+      })),
+    })),
+    storage: {
+      localStorageKeys: (Array.isArray(storage.localStorageKeys) ? storage.localStorageKeys : []).slice(0, 100).map(item => ({
+        name: safeString(item.name, 120),
+      })),
+      sessionStorageKeys: (Array.isArray(storage.sessionStorageKeys) ? storage.sessionStorageKeys : []).slice(0, 100).map(item => ({
+        name: safeString(item.name, 120),
+      })),
+    },
+    dataAttributes: safeList(profile.dataAttributes, 100),
+    securitySignals: (Array.isArray(profile.securitySignals) ? profile.securitySignals : []).slice(0, 100).map(signal => ({
+      severity: ['info', 'review', 'high'].includes(signal.severity) ? signal.severity : 'info',
+      category: safeString(signal.category, 60),
+      title: safeString(signal.title, 180),
+      evidence: safeString(signal.evidence, 1024),
+      detail: safeString(signal.detail, 500),
+    })),
+    scopeNotice: 'Passive browser-context inventory only. No Dark Web/Deep Web crawl, breach-data lookup, credential marketplace access, or secret-value collection is part of this report. Security signals are review hints, not confirmed vulnerabilities.',
+  };
+  return JSON.stringify(safeProfile, null, 2);
+}
+
 // ─── Credential JSON ──────────────────────────────────────────────────────────
 
 export function exportCredentialsJSON(credentials, redacted = false) {

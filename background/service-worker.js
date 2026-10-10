@@ -5,7 +5,7 @@
 import { initStorage, addHot, archiveCapture, clearHot, upsertCredential, upsertEndpoint,
          getCaptures, getAllCaptures, getCredentials, getEndpoints, getStats,
          getAllGraphQL, upsertGraphQL, clearAll, clearCaptures, clearCredentials,
-         clearEndpoints, getCaptureById } from './storage.js';
+         clearEndpoints, getCaptureById, upsertSiteProfile, getSiteProfile } from './storage.js';
 import { extractCredentials, extractFromStorage } from './credential-extractor.js';
 import { configureProber, probeURL, probeDiscovery, probeGraphQL,
          probeCandidates, getProberConfig } from './prober.js';
@@ -13,7 +13,7 @@ import { replayRequest, getReplayLog, clearReplayLog,
          getChainedTokens, clearChainedTokens } from './replay.js';
 import { exportHAR, exportOpenAPI, exportPostman,
          exportCredentialsJSON, exportCredentialsEnv,
-         exportGraphQLSDL, exportDiscoveryReport, downloadFile } from './exporter.js';
+         exportGraphQLSDL, exportDiscoveryReport, exportDeepFindReport, downloadFile } from './exporter.js';
 import { sha256, randomUUID, origin } from '../shared/utils.js';
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -158,6 +158,7 @@ async function _route(msg, sender) {
     case 'GET_CAPTURE_BY_ID':return getCaptureById(payload.id);
     case 'GET_CREDENTIALS':  return getCredentials();
     case 'GET_ENDPOINTS':    return getEndpoints();
+    case 'GET_SITE_PROFILE': return getSiteProfile(payload.host);
     case 'GET_GRAPHQL':      return getAllGraphQL();
     case 'GET_STATS':        return getStats();
     case 'GET_REPLAY_LOG':   return getReplayLog();
@@ -184,6 +185,7 @@ async function _route(msg, sender) {
     case 'EXPORT_CREDS_ENV':   return _doExport('creds_env',   payload);
     case 'EXPORT_GRAPHQL_SDL': return _doExport('graphql_sdl', payload);
     case 'EXPORT_DISCOVERY_REPORT': return _doExport('discovery_report', payload);
+    case 'EXPORT_DEEP_FIND_REPORT': return _doExport('deep_find_report', payload);
 
     default:
       return { error: `Unknown message type: ${type}` };
@@ -246,7 +248,7 @@ async function _handleCapture(capture, sender) {
 
 // ─── Analysis Handler ─────────────────────────────────────────────────────────
 
-async function _handleAnalysis({ endpoints = [], graphqlOps = [], host, discovery = {} } = {}, sender) {
+async function _handleAnalysis({ endpoints = [], graphqlOps = [], host, discovery = {}, siteProfile = null } = {}, sender) {
   // Persist provenance and confidence so the UI can distinguish static candidates
   // from resources actually observed in the browser performance timeline.
   for (const ep of endpoints.slice(0, 2000)) {
@@ -274,6 +276,20 @@ async function _handleAnalysis({ endpoints = [], graphqlOps = [], host, discover
     });
   }
 
+    // Store a bounded, privacy-conscious site inventory. Bind it to the sender's
+  // actual page host and discard fields that are not part of the Deep Find schema.
+  const safeProfile = _sanitizeSiteProfile(siteProfile, sender);
+  if (safeProfile) {
+    await upsertSiteProfile(safeProfile);
+    _broadcast('SITE_PROFILE_UPDATE', {
+      host: safeProfile.host,
+      technologyCount: safeProfile.technologies.length,
+      routeCount: safeProfile.routes.length,
+      formCount: safeProfile.forms.length,
+      signalCount: safeProfile.securitySignals.length,
+    });
+  }
+
   // Auto-probe path candidates if prober is enabled
   const { settings = {} } = await chrome.storage.local.get('settings');
   if (settings.proberEnabled) {
@@ -294,6 +310,117 @@ async function _handleAnalysis({ endpoints = [], graphqlOps = [], host, discover
 
   _broadcast('ANALYSIS_UPDATE', { endpointCount: endpoints.length, host, discovery });
   return { ok: true };
+}
+
+function _sanitizeSiteProfile(raw, sender) {
+  if (!raw || typeof raw !== 'object' || typeof raw.host !== 'string') return null;
+  let expectedHost = '';
+  try { expectedHost = new URL(sender?.url || '').hostname.toLowerCase(); } catch {}
+  const host = raw.host.toLowerCase().replace(/\.$/, '');
+  if (!host || !expectedHost || host !== expectedHost.replace(/\.$/, '') || host.length > 253) return null;
+
+  const clip = (value, max = 300) => typeof value === 'string' ? value.slice(0, max) : '';
+  const number = (value, max = 1000000) => Number.isFinite(Number(value)) ? Math.max(0, Math.min(max, Number(value))) : 0;
+  const safeURL = value => {
+    if (typeof value !== 'string' || !value || value.length > 2048) return '';
+    try {
+      const u = new URL(value, 'https://' + host + '/');
+      if (!['http:', 'https:'].includes(u.protocol)) return '';
+      u.username = ''; u.password = ''; u.search = ''; u.hash = '';
+      return u.href.slice(0, 1024);
+    } catch { return ''; }
+  };
+  const safePathList = (value, cap = 250) => (Array.isArray(value) ? value : [])
+    .filter(item => typeof item === 'string' && item.startsWith('/'))
+    .map(item => item.split(/[?#]/)[0].slice(0, 300))
+    .filter(Boolean).slice(0, cap);
+  const safeURLList = (value, cap = 100) => Array.from(new Set(
+    (Array.isArray(value) ? value : []).map(safeURL).filter(Boolean)
+  )).slice(0, cap);
+  const rawPage = raw.page && typeof raw.page === 'object' ? raw.page : {};
+  const rawAssets = raw.assets && typeof raw.assets === 'object' ? raw.assets : {};
+  const rawStorage = raw.storage && typeof raw.storage === 'object' ? raw.storage : {};
+  const safeStorageKeys = value => (Array.isArray(value) ? value : []).slice(0, 100)
+    .filter(item => item && typeof item === 'object')
+    .map(item => ({ name: clip(item.name, 120) }));
+  return {
+    schemaVersion: 1,
+    host,
+    capturedAt: number(raw.capturedAt || Date.now(), Date.now() * 2),
+    page: {
+      url: safeURL(rawPage.url),
+      title: clip(rawPage.title, 200),
+      language: clip(rawPage.language, 30),
+      description: clip(rawPage.description, 300),
+      generator: clip(rawPage.generator, 300),
+      canonical: safeURL(rawPage.canonical),
+      robots: clip(rawPage.robots, 300),
+      referrerPolicy: clip(rawPage.referrerPolicy, 300),
+      viewport: clip(rawPage.viewport, 300),
+      themeColor: clip(rawPage.themeColor, 80),
+      openGraphTitle: clip(rawPage.openGraphTitle, 200),
+      openGraphType: clip(rawPage.openGraphType, 80),
+      cspMetaPresent: rawPage.cspMetaPresent === true,
+      structuredDataTypes: (Array.isArray(rawPage.structuredDataTypes) ? rawPage.structuredDataTypes : []).slice(0, 50).map(item => clip(item, 100)),
+    },
+    technologies: (Array.isArray(raw.technologies) ? raw.technologies : []).slice(0, 40)
+      .filter(item => item && typeof item === 'object')
+      .map(item => ({ name: clip(item.name, 100), evidence: clip(item.evidence, 180), confidence: number(item.confidence, 100) })),
+    counts: {
+      scripts: number(raw.counts?.scripts, 1000),
+      styles: number(raw.counts?.styles, 1000),
+      images: number(raw.counts?.images, 1000),
+      frames: number(raw.counts?.frames, 500),
+      manifests: number(raw.counts?.manifests, 100),
+      routes: number(raw.counts?.routes, 1000),
+      links: number(raw.counts?.links, 5000),
+      forms: number(raw.counts?.forms, 500),
+      externalLinks: number(raw.counts?.externalLinks, 5000),
+      externalOrigins: number(raw.counts?.externalOrigins, 500),
+      storageKeys: number(raw.counts?.storageKeys, 500),
+    },
+    assets: {
+      scripts: safeURLList(rawAssets.scripts, 120),
+      styles: safeURLList(rawAssets.styles, 100),
+      images: safeURLList(rawAssets.images, 100),
+      frames: safeURLList(rawAssets.frames, 50),
+      manifests: safeURLList(rawAssets.manifests, 10),
+      icons: safeURLList(rawAssets.icons, 20),
+      serviceWorkerControlled: rawAssets.serviceWorkerControlled === true,
+      serviceWorkerScope: safeURL(rawAssets.serviceWorkerScope),
+      externalOrigins: safeURLList(rawAssets.externalOrigins, 100),
+      performanceResources: number(rawAssets.performanceResources, 500),
+    },
+    routes: safePathList(raw.routes, 250),
+    forms: (Array.isArray(raw.forms) ? raw.forms : []).slice(0, 80)
+      .filter(form => form && typeof form === 'object')
+      .map(form => ({
+        action: safeURL(form.action),
+        method: ['GET','POST','PUT','PATCH','DELETE','DIALOG'].includes(String(form.method || '').toUpperCase())
+          ? String(form.method).toUpperCase() : 'GET',
+        externalAction: form.externalAction === true,
+        hasPassword: form.hasPassword === true,
+        fieldCount: number(form.fieldCount, 40),
+        fields: (Array.isArray(form.fields) ? form.fields : []).slice(0, 40)
+          .filter(field => field && typeof field === 'object')
+          .map(field => ({
+            name: clip(field.name, 100), type: clip(field.type, 30),
+            required: field.required === true, autocomplete: clip(field.autocomplete, 40),
+          })),
+      })),
+    storage: {
+      localStorageKeys: safeStorageKeys(rawStorage.localStorageKeys),
+      sessionStorageKeys: safeStorageKeys(rawStorage.sessionStorageKeys),
+    },
+    dataAttributes: (Array.isArray(raw.dataAttributes) ? raw.dataAttributes : []).slice(0, 100).map(item => clip(item, 80)),
+    securitySignals: (Array.isArray(raw.securitySignals) ? raw.securitySignals : []).slice(0, 100)
+      .filter(item => item && typeof item === 'object')
+      .map(item => ({
+        severity: ['info','review','high'].includes(item.severity) ? item.severity : 'info',
+        category: clip(item.category, 60), title: clip(item.title, 180),
+        evidence: clip(item.evidence, 1024), detail: clip(item.detail, 500),
+      })),
+  };
 }
 
 // ─── Storage Scan Handler ─────────────────────────────────────────────────────
@@ -355,6 +482,12 @@ async function _doExport(type, payload) {
         : '# No GraphQL schemas captured\n';
       downloadFile(content, 'age-schema.graphql', 'text/plain');
       return { ok: true };
+    }
+    case 'deep_find_report': {
+      const profile = await getSiteProfile(payload.host || '');
+      if (!profile) return { ok: false, error: 'No Deep Find profile for this host yet. Reload the site and open AGE again.' };
+      downloadFile(exportDeepFindReport(profile), 'age-deep-find-report.json', 'application/json');
+      return { ok: true, host: profile.host, findings: (profile.technologies?.length || 0) + (profile.routes?.length || 0) + (profile.forms?.length || 0) + (profile.securitySignals?.length || 0) };
     }
     case 'discovery_report': {
       const [eps, schemas] = await Promise.all([getEndpoints(), getAllGraphQL()]);

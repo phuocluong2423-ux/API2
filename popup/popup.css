@@ -1,7 +1,7 @@
 /* API Extraction Engine — Popup Stylesheet
    Dark hacker-aesthetic, neon cyan accents, glassmorphism panels */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+/* Local system fonts only: no remote font or analytics dependency. */
 
 /* ── Reset & Base ─────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -374,6 +374,9 @@ html, body {
 .tag-WS          { background: rgba(170,102,255,0.15); color: var(--purple); border: 1px solid rgba(170,102,255,0.3); }
 .tag-SSE         { background: rgba(68,255,136,0.12); color: var(--green); border: 1px solid rgba(68,255,136,0.25); }
 .tag-OK          { background: rgba(68,255,136,0.08); color: var(--green); }
+.tag-INFO        { background: rgba(68,170,255,0.10); color: var(--blue); border: 1px solid rgba(68,170,255,0.2); }
+.tag-REVIEW      { background: rgba(255,216,68,0.12); color: var(--yellow); border: 1px solid rgba(255,216,68,0.22); }
+.tag-HIGH        { background: rgba(255,68,102,0.14); color: var(--red); border: 1px solid rgba(255,68,102,0.24); }
 .tag-ERR         { background: rgba(255,68,102,0.08); color: var(--red); }
 .tag-STORAGE     { background: rgba(255,216,68,0.08); color: var(--yellow); }
 
