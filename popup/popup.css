@@ -1,7 +1,7 @@
 /* API Extraction Engine — Popup Stylesheet
    Dark hacker-aesthetic, neon cyan accents, glassmorphism panels */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+/* Local system fonts only: no remote font or analytics dependency. */
 
 /* ── Reset & Base ─────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
