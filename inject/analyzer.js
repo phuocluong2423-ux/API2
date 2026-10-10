@@ -384,6 +384,265 @@
     };
   }
 
+  // ── Passive Deep Find: page inventory, technology clues, routes and security signals
+  // Never collect form values or storage values here; only structure and field names.
+  function _scanSiteProfile(pageHost) {
+    const originURL = location.origin;
+    const safeURL = (raw, keepOrigin = true) => {
+      try {
+        const u = new URL(raw, location.href);
+        if (!['http:', 'https:'].includes(u.protocol)) return '';
+        u.username = '';
+        u.password = '';
+        u.search = '';
+        u.hash = '';
+        return keepOrigin ? u.origin + u.pathname : u.pathname;
+      } catch {
+        return typeof raw === 'string' && raw.startsWith('/') ? raw.split(/[?#]/)[0].slice(0, 1024) : '';
+      }
+    };
+    const uniqStrings = (values, cap = 100) => Array.from(new Set(values.filter(Boolean))).slice(0, cap);
+    const getMeta = name => {
+      const el = document.querySelector('meta[name="' + name.replace(/["\\]/g, '') + '"]');
+      return String(el?.content || '').trim().slice(0, 300);
+    };
+    const assetList = (selector, attr, cap = 100) => {
+      const values = [];
+      for (const el of Array.from(document.querySelectorAll(selector)).slice(0, cap * 3)) {
+        const raw = el.getAttribute(attr);
+        const url = raw ? safeURL(raw, true) : '';
+        if (url) values.push(url);
+      }
+      return uniqStrings(values, cap);
+    };
+    const pageURL = safeURL(location.href, true);
+    const scripts = assetList('script[src]', 'src', 120);
+    const styles = assetList('link[rel~="stylesheet"][href]', 'href', 100);
+    const images = assetList('img[src],source[src]', 'src', 100);
+    const frames = assetList('iframe[src]', 'src', 50);
+    const manifests = assetList('link[rel="manifest"][href]', 'href', 10);
+    const icons = assetList('link[rel~="icon"][href]', 'href', 20);
+    const allResourceURLs = uniqStrings([
+      ...scripts, ...styles, ...images, ...frames, ...manifests,
+      ...Array.from(performance.getEntriesByType('resource').slice(-500), e => safeURL(e.name, true)),
+    ], 500);
+    const externalOrigins = uniqStrings(allResourceURLs.map(value => {
+      try { const u = new URL(value); return u.origin !== originURL ? u.origin : ''; } catch { return ''; }
+    }), 100);
+
+    const technologies = [];
+    const addTech = (name, evidence, confidence = 65) => {
+      if (technologies.some(t => t.name === name)) return;
+      technologies.push({ name, evidence: String(evidence).slice(0, 180), confidence });
+    };
+    const sourceHints = scripts.concat(styles).join('\n').toLowerCase();
+    const htmlHints = (document.documentElement?.outerHTML || '').slice(0, 250000);
+    if (/\/_next\/|__NEXT_DATA__/.test(sourceHints + htmlHints)) addTech('Next.js', 'Next.js asset path or page-state marker', 92);
+    if (/\/_nuxt\/|__NUXT__/.test(sourceHints + htmlHints)) addTech('Nuxt', 'Nuxt asset path or page-state marker', 92);
+    if (/ng-version=|angular\.js|angular\.min\.js/i.test(sourceHints + htmlHints)) addTech('Angular', 'Angular asset or ng-version marker', 88);
+    if (/react(?:-dom)?(?:\.production)?(?:\.min)?\.js/i.test(sourceHints) || document.querySelector('[data-reactroot], #__next')) addTech('React', 'React bundle or DOM marker', 80);
+    if (/vue(?:\.runtime)?(?:\.global)?(?:\.prod)?(?:\.min)?\.js/i.test(sourceHints) || document.querySelector('[data-v-app], [data-vue-meta]')) addTech('Vue.js', 'Vue bundle or DOM marker', 80);
+    if (/\/_astro\/|astro-island/i.test(sourceHints + htmlHints)) addTech('Astro', 'Astro asset or island marker', 88);
+    if (/\/_svelte\/|data-svelte-h/i.test(sourceHints + htmlHints)) addTech('Svelte', 'Svelte asset or DOM marker', 78);
+    if (/\/wp-content\/|\/wp-includes\//i.test(sourceHints)) addTech('WordPress', 'WordPress asset path', 90);
+    if (/cdn\.shopify\.com|shopify\.com\/s\/files/i.test(sourceHints)) addTech('Shopify', 'Shopify asset host', 88);
+    if (/jquery(?:-\d+(?:\.\d+){0,2})?(?:\.min)?\.js/i.test(sourceHints)) addTech('jQuery', 'jQuery bundle filename', 82);
+    if (/bootstrap(?:\.bundle)?(?:\.min)?\.js|bootstrap(?:\.min)?\.css/i.test(sourceHints)) addTech('Bootstrap', 'Bootstrap asset filename', 82);
+    if (/\/assets\/index-[^/]+\.js|\/@vite\/client|vite\.svg/i.test(sourceHints)) addTech('Vite', 'Vite asset or development-client marker', 74);
+    if (/webpackJsonp|webpackChunk|__webpack_require__/i.test(htmlHints)) addTech('Webpack', 'Webpack runtime marker', 78);
+    if (/\/_gatsby\/|___gatsby/i.test(sourceHints + htmlHints)) addTech('Gatsby', 'Gatsby asset or DOM marker', 86);
+    const generator = getMeta('generator');
+    if (generator) addTech('Generator metadata', generator, 95);
+    if (globalThis.jQuery || globalThis.$?.fn?.jquery) addTech('jQuery', 'jQuery runtime global', 90);
+    if (globalThis.angular || document.documentElement?.hasAttribute('ng-version')) addTech('Angular', 'Angular runtime/DOM marker', 92);
+    if (globalThis.Vue || document.querySelector('[data-v-app]')) addTech('Vue.js', 'Vue runtime/DOM marker', 88);
+    if (globalThis.__NEXT_DATA__) addTech('Next.js', 'Next.js runtime state marker', 96);
+    if (globalThis.__NUXT__) addTech('Nuxt', 'Nuxt runtime state marker', 96);
+
+    const routes = [];
+    const linkSeen = new Set();
+    let externalLinkCount = 0;
+    let newTabWithoutNoopener = 0;
+    for (const a of Array.from(document.querySelectorAll('a[href]')).slice(0, 1000)) {
+      const raw = a.getAttribute('href') || '';
+      const url = safeURL(raw, true);
+      if (!url) continue;
+      try {
+        const u = new URL(url);
+        if (u.origin !== originURL) externalLinkCount++;
+        else if (!linkSeen.has(u.pathname)) {
+          linkSeen.add(u.pathname);
+          routes.push(u.pathname.slice(0, 300));
+        }
+      } catch {}
+      if (a.target === '_blank' && !/\bnoopener\b|\bnoreferrer\b/i.test(a.rel || '')) newTabWithoutNoopener++;
+    }
+
+    const forms = [];
+    const securitySignals = [];
+    const formElements = Array.from(document.querySelectorAll('form')).slice(0, 80);
+    for (const form of formElements) {
+      const rawAction = form.getAttribute('action') || location.href;
+      const action = safeURL(rawAction, true) || pageURL;
+      let actionOrigin = '';
+      try { actionOrigin = new URL(action).origin; } catch {}
+      const fields = Array.from(form.querySelectorAll('input,select,textarea,button')).slice(0, 40).map(field => ({
+        name: String(field.getAttribute('name') || field.id || '').slice(0, 100),
+        type: String(field.getAttribute('type') || field.tagName.toLowerCase()).slice(0, 30),
+        required: !!field.required,
+        autocomplete: String(field.getAttribute('autocomplete') || '').slice(0, 40),
+      }));
+      const hasPassword = fields.some(field => field.type.toLowerCase() === 'password');
+      const externalAction = !!actionOrigin && actionOrigin !== originURL;
+      forms.push({
+        action, method: String(form.method || 'get').toUpperCase(),
+        externalAction, hasPassword,
+        fieldCount: fields.length, fields,
+      });
+      if (externalAction) securitySignals.push({
+        severity: 'review', category: 'form', title: 'Form submits to another origin',
+        evidence: action, detail: 'Review whether this external form destination is intentional.',
+      });
+      if (hasPassword && location.protocol !== 'https:' && !/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname)) {
+        securitySignals.push({
+          severity: 'high', category: 'transport', title: 'Password field on a non-HTTPS page',
+          evidence: safeURL(location.href, true), detail: 'Credentials entered on an unencrypted page may be exposed in transit.',
+        });
+      }
+    }
+
+    const metaCsp = !!document.querySelector('meta[http-equiv="Content-Security-Policy" i]');
+    const metaReferrer = getMeta('referrer');
+    const metaRobots = getMeta('robots');
+    const description = getMeta('description');
+    const canonical = safeURL(document.querySelector('link[rel="canonical"]')?.href || '', true);
+    const scriptNodes = Array.from(document.querySelectorAll('script[src]')).slice(0, 300);
+    let externalScriptWithoutSRI = 0;
+    let mixedContentCount = 0;
+    for (const script of scriptNodes) {
+      const url = safeURL(script.src, true);
+      if (!url) continue;
+      try {
+        const u = new URL(url);
+        if (u.origin !== originURL && !script.integrity) externalScriptWithoutSRI++;
+        if (location.protocol === 'https:' && u.protocol === 'http:') mixedContentCount++;
+      } catch {}
+    }
+    for (const el of Array.from(document.querySelectorAll('img[src],iframe[src],link[href],source[src]')).slice(0, 500)) {
+      const raw = el.getAttribute('src') || el.getAttribute('href') || '';
+      try {
+        const u = new URL(raw, location.href);
+        if (location.protocol === 'https:' && u.protocol === 'http:') mixedContentCount++;
+      } catch {}
+    }
+    if (mixedContentCount) securitySignals.push({
+      severity: 'high', category: 'transport', title: 'Potential mixed-content references',
+      evidence: String(mixedContentCount) + ' HTTP resource reference(s) on an HTTPS page',
+      detail: 'Browser policy may block some resources; review each referenced URL.',
+    });
+    if (externalScriptWithoutSRI) securitySignals.push({
+      severity: 'info', category: 'integrity', title: 'External scripts without Subresource Integrity',
+      evidence: String(externalScriptWithoutSRI) + ' external script(s) without an integrity attribute',
+      detail: 'This is a review hint, not proof of a vulnerability; SRI is not suitable for every delivery pattern.',
+    });
+    if (newTabWithoutNoopener) securitySignals.push({
+      severity: 'info', category: 'navigation', title: 'Links opening new tabs without noopener/noreferrer',
+      evidence: String(newTabWithoutNoopener) + ' link(s) use target=_blank without a protective rel value',
+      detail: 'Review opener isolation for links to untrusted or external destinations.',
+    });
+    if (!metaCsp) securitySignals.push({
+      severity: 'info', category: 'headers', title: 'No CSP meta tag detected',
+      evidence: 'No meta http-equiv Content-Security-Policy element found in the document',
+      detail: 'This does not prove the response lacks a CSP header; page scripts cannot reliably inspect that header here.',
+    });
+    if (location.protocol !== 'https:' && !/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname)) securitySignals.push({
+      severity: 'review', category: 'transport', title: 'Page is not using HTTPS',
+      evidence: safeURL(location.href, true),
+      detail: 'Confirm whether HTTP is expected for this environment.',
+    });
+
+    const storageKeys = storage => {
+      const keys = [];
+      try {
+        for (let i = 0; i < storage.length && keys.length < 100; i++) {
+          const key = storage.key(i);
+          if (key === null) continue;
+          // Report key names and approximate lengths only; never read out values into Deep Find.
+          const value = storage.getItem(key);
+          keys.push({ name: String(key).slice(0, 120), length: String(value || '').length });
+        }
+      } catch {}
+      return keys;
+    };
+    const structuredDataTypes = [];
+    for (const el of Array.from(document.querySelectorAll('script[type="application/ld+json"]')).slice(0, 40)) {
+      try {
+        const parsed = JSON.parse(el.textContent || '');
+        const collectTypes = obj => {
+          if (!obj || typeof obj !== 'object') return;
+          if (obj['@type']) structuredDataTypes.push(String(obj['@type']).slice(0, 100));
+          if (Array.isArray(obj)) obj.slice(0, 100).forEach(collectTypes);
+          else if (obj['@graph']) collectTypes(obj['@graph']);
+        };
+        collectTypes(parsed);
+      } catch {}
+    }
+    const dataAttributes = uniqStrings(
+      Array.from(document.querySelectorAll('*')).slice(0, 1500).flatMap(el =>
+        Array.from(el.attributes || []).map(attr => attr.name).filter(name => name.startsWith('data-'))
+      ), 100
+    );
+
+    let serviceWorkerScope = '';
+    try {
+      if (navigator.serviceWorker?.controller) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        serviceWorkerScope = reg?.scope ? safeURL(reg.scope, true) : 'controller active; registration scope unavailable';
+      }
+    } catch {}
+
+    const assets = {
+      scripts, styles, images, frames, manifests, icons,
+      serviceWorkerControlled: !!navigator.serviceWorker?.controller,
+      serviceWorkerScope,
+      externalOrigins,
+      performanceResources: Math.min(500, performance.getEntriesByType('resource').length),
+    };
+    const page = {
+      url: pageURL,
+      title: String(document.title || '').slice(0, 200),
+      language: String(document.documentElement?.lang || '').slice(0, 30),
+      description,
+      generator,
+      canonical,
+      robots: metaRobots,
+      referrerPolicy: metaReferrer,
+      viewport: getMeta('viewport'),
+      themeColor: getMeta('theme-color'),
+      openGraphTitle: getMeta('og:title'),
+      openGraphType: getMeta('og:type'),
+      cspMetaPresent: metaCsp,
+      structuredDataTypes: uniqStrings(structuredDataTypes, 50),
+    };
+    return {
+      schemaVersion: 1, host: pageHost, capturedAt: Date.now(), page,
+      technologies: technologies.slice(0, 40),
+      counts: {
+        scripts: scripts.length, styles: styles.length, images: images.length,
+        frames: frames.length, manifests: manifests.length, routes: routes.length,
+        links: document.querySelectorAll('a[href]').length,
+        forms: formElements.length, externalLinks: externalLinkCount,
+        externalOrigins: externalOrigins.length, storageKeys: storageKeys(localStorage).length + storageKeys(sessionStorage).length,
+      },
+      assets,
+      routes: uniqStrings(routes, 250),
+      forms: forms.slice(0, 80),
+      storage: { localStorageKeys: storageKeys(localStorage), sessionStorageKeys: storageKeys(sessionStorage) },
+      dataAttributes,
+      securitySignals: securitySignals.slice(0, 100),
+    };
+  }
+
   // ── Main Analysis Routine ─────────────────────────────────────────────────
 
   async function _runAnalysis() {
@@ -501,6 +760,8 @@
         return !/\.(?:css|png|jpe?g|gif|svg|ico|woff2?|ttf|eot|mp4|webm|pdf|map|txt\.gz)(?:[?#]|$)/i.test(item.url);
       }).slice(0, 2000);
 
+      const siteProfile = await _scanSiteProfile(pageHost);
+
       const uniqueGQL = [];
       const gqlSeen = new Set();
       for (const op of allGQL) {
@@ -511,7 +772,7 @@
       }
 
       _post('ANALYSIS_RESULT', {
-        host: pageHost, endpoints: filtered, graphqlOps: uniqueGQL.slice(0, 500),
+        host: pageHost, endpoints: filtered, graphqlOps: uniqueGQL.slice(0, 500), siteProfile,
         discovery: {
           scriptsSeen: scripts.length, scriptsAnalyzed: sourcesAnalyzed,
           sourceMapsAnalyzed, sourceChars,
@@ -521,7 +782,7 @@
         },
         timestamp: Date.now(),
       });
-      console.debug(`[AGE Analyzer] ${filtered.length} endpoint candidates, ${uniqueGQL.length} GraphQL ops on ${pageHost}`);
+      console.debug(`[AGE Analyzer] ${filtered.length} endpoint candidates, ${uniqueGQL.length} GraphQL ops, ${siteProfile.technologies.length} technology clues and ${siteProfile.securitySignals.length} review signals on ${pageHost}`);
     } finally {
       _analysisRunning = false;
       if (_analysisPending) { _analysisPending = false; _scheduleAnalysis(500, false); }
