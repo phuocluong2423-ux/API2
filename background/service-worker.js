@@ -342,7 +342,7 @@ function _sanitizeSiteProfile(raw, sender) {
   const rawStorage = raw.storage && typeof raw.storage === 'object' ? raw.storage : {};
   const safeStorageKeys = value => (Array.isArray(value) ? value : []).slice(0, 100)
     .filter(item => item && typeof item === 'object')
-    .map(item => ({ name: clip(item.name, 120), length: number(item.length, 1000000) }));
+    .map(item => ({ name: clip(item.name, 120) }));
   return {
     schemaVersion: 1,
     host,
