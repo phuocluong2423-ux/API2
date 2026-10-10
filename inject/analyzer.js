@@ -11,6 +11,17 @@
   let   _ack    = false;
   let   _msgId  = 0;
 
+  // Keep analysis bounded so large sites do not overwhelm the browser.
+  const MAX_SCRIPT_SOURCES = 100;
+  const MAX_SOURCE_BYTES = 1024 * 1024;
+  const MAX_SOURCE_MAP_BYTES = 3 * 1024 * 1024;
+  const MAX_TOTAL_SOURCE_CHARS = 8 * 1024 * 1024;
+  let _scannedExternalSources = new Set();
+  let _analysisTimer = null;
+  let _analysisRunning = false;
+  let _analysisPending = false;
+  let _autoRescans = 0;
+
   function _rand() {
     return Array.from(globalThis.crypto.getRandomValues(new Uint8Array(8)))
       .map(b => b.toString(16).padStart(2,'0')).join('');
@@ -24,7 +35,7 @@
     if (!d || typeof d !== 'object') return;
     if (d.type === 'AGE_INIT_ACK') _ack = true;
     if (d.type === 'AGE_TRIGGER_STORAGE_SCAN') _doStorageScan();
-    if (d.type === 'AGE_NAVIGATION') setTimeout(_runAnalysis, 800);
+    if (d.type === 'AGE_NAVIGATION') _scheduleAnalysis(800, true);
   });
 
   function _post(type, payload) {
@@ -105,11 +116,38 @@
 
   // ── Script Fetching ───────────────────────────────────────────────────────
 
-  async function _fetchText(url) {
+  // Read at most maxBytes from an already-loaded script/source-map URL.
+  // This prevents a very large bundle from consuming unbounded memory.
+  async function _fetchText(url, maxBytes = MAX_SOURCE_BYTES) {
     try {
       const res = await fetch(url, { credentials: 'omit', cache: 'force-cache' });
       if (!res.ok) return null;
-      return await res.text();
+      const declared = Number(res.headers.get('content-length') || 0);
+      if (declared > maxBytes * 20) return null;
+      if (!res.body || !res.body.getReader) {
+        const text = await res.text();
+        return text.length > maxBytes ? text.slice(0, maxBytes) : text;
+      }
+      const reader = res.body.getReader();
+      const chunks = [];
+      let size = 0;
+      while (size < maxBytes) {
+        const part = await reader.read();
+        if (part.done) break;
+        const remaining = maxBytes - size;
+        const chunk = part.value.byteLength > remaining
+          ? part.value.slice(0, remaining) : part.value;
+        chunks.push(chunk);
+        size += chunk.byteLength;
+        if (chunk.byteLength < part.value.byteLength) {
+          await reader.cancel().catch(() => {});
+          break;
+        }
+      }
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+      return new TextDecoder().decode(bytes);
     } catch { return null; }
   }
 
@@ -120,17 +158,23 @@
     const smRef = match[1];
 
     if (smRef.startsWith('data:')) {
+      if (smRef.length > MAX_SOURCE_MAP_BYTES * 2) return null;
       try {
-        const b64 = smRef.split(',')[1];
-        return JSON.parse(atob(b64));
+        const comma = smRef.indexOf(',');
+        if (comma < 0) return null;
+        const data = smRef.slice(comma + 1);
+        const decoded = smRef.slice(0, comma).includes(';base64')
+          ? atob(data) : decodeURIComponent(data);
+        if (decoded.length > MAX_SOURCE_MAP_BYTES) return null;
+        return JSON.parse(decoded);
       } catch { return null; }
     }
 
     try {
       const mapURL = new URL(smRef, scriptURL).href;
-      const res    = await fetch(mapURL, { credentials: 'omit', cache: 'force-cache' });
-      if (!res.ok) return null;
-      return await res.json();
+      const text = await _fetchText(mapURL, MAX_SOURCE_MAP_BYTES);
+      if (!text || text.length >= MAX_SOURCE_MAP_BYTES) return null;
+      return JSON.parse(text);
     } catch { return null; }
   }
 
