@@ -46,36 +46,40 @@
 
   function _extractURLs(text) {
     if (!text || typeof text !== 'string') return [];
-    const seen    = new Set();
+    const seen = new Set();
     const results = [];
-    const add     = (url, type) => {
-      url = url.replace(/[,;.'")\]}>]+$/, '');
-      if (!seen.has(url) && url.length > 2 && url.length < 2048) {
-        seen.add(url); results.push({ url, type });
-      }
+    const apiPath = /\/(?:api|_api|webapi|v\d+|graphql|gql|trpc|rpc|rest|service|data|auth|oauth|session|admin|internal|mobile|gateway|query|mutation|ajax|backend|functions|\.well-known)(?:\/|[?#]|$)/i;
+    const add = (raw, type) => {
+      const url = String(raw || '').replace(/[,;.'")\]}>]+$/, '');
+      if (url.length < 3 || url.length >= 2048 || seen.has(url)) return;
+      if (/^(?:javascript|data|blob|mailto|tel):/i.test(url)) return;
+      seen.add(url);
+      let confidence = 45;
+      if (type === 'absolute') {
+        try { confidence = apiPath.test(new URL(url).pathname) ? 88 : 58; } catch {}
+      } else if (type === 'path_literal') confidence = 82;
+      else if (type === 'route_key') confidence = 79;
+      else if (type === 'versioned') confidence = 74;
+      else if (type === 'api_path') confidence = 76;
+      else if (type === 'base_url') confidence = 70;
+      results.push({ url, type, confidence, evidence: type });
     };
 
-    // Absolute URLs
-    for (const m of text.matchAll(/https?:\/\/[^\s"'<>`\])}\\,;]{4,}/g)) add(m[0], 'absolute');
+    for (const m of text.matchAll(/https?:\/\/[^\s"'<>\x60\])}\\,;]{4,}/g)) add(m[0], 'absolute');
 
-    // Path literals near HTTP/API keywords
-    for (const m of text.matchAll(
-      /(?:fetch|axios|got|request|http(?:Client|Service|s)?|url|endpoint|api|graphql|baseURL?|route|path|href)\s*[=:(,+<{]\s*['"`]?(\/[A-Za-z0-9_\-./{}\[\]:?=&%#@!$*+~]{2,512})/gi
-    )) add(m[1], 'path_literal');
+    for (const m of text.matchAll(/(?:fetch|axios|got|request|http(?:Client|Service|s)?|url|endpoint|api|graphql|baseURL?|apiBaseURL|apiUrl|route|path|href|uri)\s*[=:(,+<{]\s*['"\x60]?((?:https?:\/\/|\/)\/*[A-Za-z0-9_\-./{}\[\]:?=&%#@!$*+~]{1,1024})/gi)) {
+      add(m[1], m[1].startsWith('/') ? 'path_literal' : 'absolute');
+    }
 
-    // Route-map object keys: { "/api/...": ... }
-    for (const m of text.matchAll(
-      /['"](\/(api|v\d+|graphql|rest|rpc|service|data|auth|user|admin|internal|mobile|ws)[^'"]{1,400})['"]\s*:/g
-    )) add(m[1], 'route_key');
-
-    // Versioned prefixes
-    for (const m of text.matchAll(
-      /['"`](\/(?:v\d+|beta|internal|preview|staging|alpha|canary)\/[^'"` \t\n]{2,200})['"`]/g
-    )) add(m[1], 'versioned');
+    for (const m of text.matchAll(/['"\x60]((?:\/(?:api|_api|webapi|v\d+|graphql|gql|trpc|rpc|rest|service|data|auth|oauth|session|admin|internal|mobile|gateway|query|mutation|ajax|backend|functions|\.well-known)(?:\/[^'"\x60\s]{0,300})?))['"\x60]/gi)) {
+      add(m[1], 'api_path');
+    }
+    for (const m of text.matchAll(/['"]((?:\/(?:api|v\d+|graphql|gql|trpc|rpc|rest|service|data|auth|admin|internal|mobile|gateway)[^'"]{1,400}))['"]\s*:/gi)) add(m[1], 'route_key');
+    for (const m of text.matchAll(/['"\x60](\/(?:v\d+|beta|internal|preview|staging|alpha|canary)\/[^'"\x60 \t\n]{2,200})['"\x60]/g)) add(m[1], 'versioned');
+    for (const m of text.matchAll(/(?:apiBaseUrl|apiBaseURL|baseURL|graphqlEndpoint|apiEndpoint)\s*[:=]\s*['"\x60](https?:\/\/[^'"\x60\s]{4,500}|\/[^'"\x60\s]{2,300})['"\x60]/gi)) add(m[1], 'base_url');
 
     return results;
   }
-
   function _extractGQL(text) {
     if (!text) return [];
     const ops = [];
@@ -152,7 +156,7 @@
   }
 
   async function _fetchSourceMap(scriptURL, scriptText) {
-    const match = scriptText.match(/\/\/[#@]\s*sourceMappingURL=([^\s]+)/);
+    const match = scriptText.match(/(?:\/\/|\/\*)[#@]\s*sourceMappingURL=([^\s*]+)/);
     if (!match) return null;
 
     const smRef = match[1];
@@ -182,23 +186,19 @@
 
   async function _analyzeText(src, text, pageHost) {
     const endpoints = [];
-    const gqlOps   = [];
-
+    const gqlOps = [];
     for (const item of _extractURLs(text)) {
       let host = pageHost;
-      try { if (item.url.startsWith('http')) host = new URL(item.url).hostname; } catch {}
-      endpoints.push({ ...item, source: src, host });
+      try { if (/^https?:\/\//i.test(item.url)) host = new URL(item.url).hostname; } catch {}
+      endpoints.push({ ...item, source: src, host, discoveryMethod: 'static_source', observed: false });
     }
-
     for (const host of _extractForeignHosts(text, pageHost)) {
-      endpoints.push({ url: `https://${host}`, type: 'hostname', source: src, host });
+      endpoints.push({ url: `https://${host}`, type: 'hostname', confidence: 35,
+        evidence: 'foreign_hostname_literal', source: src, host, discoveryMethod: 'static_source', observed: false });
     }
-
     gqlOps.push(..._extractGQL(text));
-
     return { endpoints, gqlOps };
   }
-
   // ── Storage / Window Global Scan ──────────────────────────────────────────
 
   function _doStorageScan() {
@@ -304,117 +304,207 @@
     return endpoints;
   }
 
+  // ── Runtime Resource Clues ────────────────────────────────────────────────
+
+  function _scanPerformanceResources(pageHost) {
+    const endpoints = [];
+    try {
+      const entries = performance.getEntriesByType('resource').slice(-1500);
+      for (const entry of entries) {
+        const url = String(entry.name || '');
+        if (!/^https?:\/\//i.test(url)) continue;
+        const initiator = String(entry.initiatorType || '').toLowerCase();
+        const likelyAPI = /\/(?:api|_api|graphql|gql|trpc|rpc|rest|service|gateway|v\d+)(?:\/|[?#]|$)/i.test(url);
+        if (!['fetch', 'xmlhttprequest'].includes(initiator) && !likelyAPI) continue;
+        if (/\.(?:css|png|jpe?g|gif|svg|ico|woff2?|ttf|eot|mp4|webm|pdf)(?:[?#]|$)/i.test(url)) continue;
+        let host = pageHost;
+        try { host = new URL(url).hostname; } catch {}
+        endpoints.push({
+          url, host, source: 'performance:' + (initiator || 'resource'),
+          type: 'runtime_resource', confidence: ['fetch','xmlhttprequest'].includes(initiator) ? 74 : 62,
+          evidence: 'performance_resource_timing', discoveryMethod: 'runtime_resource', observed: true,
+        });
+      }
+    } catch {}
+    return endpoints;
+  }
+
+  function _normalizeEndpoint(item, pageHost) {
+    const url = String(item?.url || '').trim();
+    if (!url || url.length >= 2048 || /^(?:data|blob|javascript|mailto|tel):/i.test(url)) return null;
+    let host = item.host || pageHost;
+    try {
+      const parsed = new URL(url, location.href);
+      if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+      if (/^https?:\/\//i.test(url)) host = parsed.hostname;
+    } catch {
+      if (!url.startsWith('/')) return null;
+    }
+    const score = Number(item.confidence);
+    const confidence = Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : 45;
+    return {
+      ...item, url, host, confidence,
+      confidenceLabel: confidence >= 80 ? 'high' : confidence >= 60 ? 'medium' : 'low',
+      source: String(item.source || 'unknown').slice(0, 500),
+      discoveryMethod: item.discoveryMethod || item.type || 'static_source',
+      evidence: String(item.evidence || item.type || 'candidate').slice(0, 160),
+      observed: item.observed === true,
+    };
+  }
+
   // ── Main Analysis Routine ─────────────────────────────────────────────────
 
   async function _runAnalysis() {
-    const pageHost    = location.hostname;
+    if (_analysisRunning) { _analysisPending = true; return; }
+    _analysisRunning = true;
+    const pageHost = location.hostname;
     const allEndpoints = [];
-    const allGQL      = [];
+    const allGQL = [];
+    let sourceChars = 0;
+    let sourcesAnalyzed = 0;
+    let sourceMapsAnalyzed = 0;
 
-    // 1. Script elements
-    const scripts  = Array.from(document.querySelectorAll('script'));
-    const promises = scripts.map(async (script) => {
-      if (script.src) {
-        const text = await _fetchText(script.src);
-        if (!text) return;
-        const { endpoints, gqlOps } = await _analyzeText(script.src, text, pageHost);
-        allEndpoints.push(...endpoints);
-        allGQL.push(...gqlOps);
+    try {
+      const scripts = Array.from(document.querySelectorAll('script')).slice(0, MAX_SCRIPT_SOURCES);
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < scripts.length && sourceChars < MAX_TOTAL_SOURCE_CHARS) {
+          const script = scripts[cursor++];
+          if (script.src) {
+            let sourceURL;
+            try { sourceURL = new URL(script.src, location.href).href; } catch { continue; }
+            if (_scannedExternalSources.has(sourceURL)) continue;
+            _scannedExternalSources.add(sourceURL);
+            const budget = Math.max(1, Math.min(MAX_SOURCE_BYTES, MAX_TOTAL_SOURCE_CHARS - sourceChars));
+            const text = await _fetchText(sourceURL, budget);
+            if (!text) continue;
+            sourceChars += text.length;
+            sourcesAnalyzed++;
+            const result = await _analyzeText(sourceURL, text, pageHost);
+            allEndpoints.push(...result.endpoints);
+            allGQL.push(...result.gqlOps);
 
-        // Source map
-        const sm = await _fetchSourceMap(script.src, text);
-        if (sm) {
-          // Paths listed in sources[]
-          for (const s of (sm.sources || [])) {
-            if (s && s.length < 2048)
-              allEndpoints.push({ url: s, type: 'sourcemap', source: script.src, host: pageHost });
-          }
-          // Actual source content
-          for (const content of (sm.sourcesContent || [])) {
-            if (content) {
-              const r = await _analyzeText(script.src + '[map]', content, pageHost);
-              allEndpoints.push(...r.endpoints);
-              allGQL.push(...r.gqlOps);
+            const sm = await _fetchSourceMap(sourceURL, text);
+            if (sm && typeof sm === 'object') {
+              sourceMapsAnalyzed++;
+              const names = Array.isArray(sm.sources) ? sm.sources.slice(0, 500) : [];
+              const contents = Array.isArray(sm.sourcesContent) ? sm.sourcesContent : [];
+              for (const name of names) {
+                if (typeof name !== 'string' || name.length > 2048) continue;
+                allEndpoints.push({
+                  url: name, type: 'sourcemap_source', confidence: 30,
+                  evidence: 'source_map_source_name', source: sourceURL, host: pageHost,
+                  discoveryMethod: 'source_map', observed: false,
+                });
+              }
+              for (const content of contents.slice(0, 500)) {
+                if (typeof content !== 'string' || !content || sourceChars >= MAX_TOTAL_SOURCE_CHARS) continue;
+                const remain = MAX_TOTAL_SOURCE_CHARS - sourceChars;
+                const bounded = content.slice(0, Math.min(MAX_SOURCE_BYTES, remain));
+                sourceChars += bounded.length;
+                if (!bounded) continue;
+                const mapped = await _analyzeText(sourceURL + '[source-map]', bounded, pageHost);
+                allEndpoints.push(...mapped.endpoints);
+                allGQL.push(...mapped.gqlOps);
+              }
             }
+          } else if (script.textContent && script.textContent.trim()) {
+            const bounded = script.textContent.slice(0, Math.min(MAX_SOURCE_BYTES, MAX_TOTAL_SOURCE_CHARS - sourceChars));
+            sourceChars += bounded.length;
+            if (!bounded) continue;
+            sourcesAnalyzed++;
+            const result = await _analyzeText('inline://' + pageHost, bounded, pageHost);
+            allEndpoints.push(...result.endpoints);
+            allGQL.push(...result.gqlOps);
           }
         }
-      } else if (script.textContent && script.textContent.trim().length > 0) {
-        const { endpoints, gqlOps } = await _analyzeText('inline://' + pageHost, script.textContent, pageHost);
-        allEndpoints.push(...endpoints);
-        allGQL.push(...gqlOps);
+      };
+      await Promise.all(Array.from({ length: Math.min(4, scripts.length) }, () => worker()));
+
+      allEndpoints.push(..._scanDOM(pageHost));
+      allEndpoints.push(..._scanPerformanceResources(pageHost));
+      allEndpoints.push(...await _scanCacheStorage(pageHost));
+
+      const stateKeys = [
+        '__NEXT_DATA__','__NUXT__','__APOLLO_STATE__','__REDUX_STATE__',
+        '__INITIAL_STATE__','__PRELOADED_STATE__','__APP_STATE__','__STORE__',
+        '__ENV__','ENV','_env','CONFIG','__config','__settings',
+        '__REACT_QUERY_STATE__','__SWR_CACHE__','appConfig','apiConfig',
+      ];
+      for (const key of stateKeys) {
+        try {
+          if (globalThis[key] === undefined) continue;
+          const value = typeof globalThis[key] === 'string'
+            ? globalThis[key] : JSON.stringify(globalThis[key]);
+          if (!value) continue;
+          const bounded = value.slice(0, 100000);
+          for (const item of _extractURLs(bounded)) {
+            allEndpoints.push({ ...item, source: 'window_global:' + key, host: pageHost,
+              discoveryMethod: 'runtime_config', observed: false });
+          }
+          allGQL.push(..._extractGQL(bounded));
+        } catch {}
       }
-    });
 
-    await Promise.allSettled(promises);
+      const byURL = new Map();
+      for (const raw of allEndpoints) {
+        const item = _normalizeEndpoint(raw, pageHost);
+        if (!item) continue;
+        let key = item.url;
+        try { const parsed = new URL(item.url, location.href); parsed.hash = ''; key = parsed.href; } catch {}
+        const existing = byURL.get(key);
+        if (!existing) {
+          byURL.set(key, { ...item, evidenceSources: [item.source] });
+          continue;
+        }
+        existing.evidenceSources = Array.from(new Set([...(existing.evidenceSources || []), item.source])).slice(0, 12);
+        existing.observed = existing.observed || item.observed;
+        if (item.confidence > existing.confidence) {
+          const sources = existing.evidenceSources;
+          Object.assign(existing, item);
+          existing.evidenceSources = sources;
+        }
+      }
+      const filtered = Array.from(byURL.values()).filter(item => {
+        return !/\.(?:css|png|jpe?g|gif|svg|ico|woff2?|ttf|eot|mp4|webm|pdf|map|txt\.gz)(?:[?#]|$)/i.test(item.url);
+      }).slice(0, 2000);
 
-    // 2. DOM scan
-    allEndpoints.push(..._scanDOM(pageHost));
+      const uniqueGQL = [];
+      const gqlSeen = new Set();
+      for (const op of allGQL) {
+        const key = `${op.type || ''}:${op.name || ''}:${String(op.source || '').slice(0, 120)}`;
+        if (gqlSeen.has(key)) continue;
+        gqlSeen.add(key);
+        uniqueGQL.push(op);
+      }
 
-    // 3. Cache Storage
-    allEndpoints.push(...await _scanCacheStorage(pageHost));
-
-    // 4. Storage values — scan for embedded URLs
-    const wg = {};
-    const STATE_KEYS = [
-      '__NEXT_DATA__','__NUXT__','__APOLLO_STATE__','__REDUX_STATE__',
-      '__INITIAL_STATE__','__PRELOADED_STATE__',
-    ];
-    for (const k of STATE_KEYS) {
-      try {
-        if (globalThis[k]) wg[k] = JSON.stringify(globalThis[k]).slice(0, 100000);
-      } catch {}
+      _post('ANALYSIS_RESULT', {
+        host: pageHost, endpoints: filtered, graphqlOps: uniqueGQL.slice(0, 500),
+        discovery: {
+          scriptsSeen: scripts.length, scriptsAnalyzed: sourcesAnalyzed,
+          sourceMapsAnalyzed, sourceChars,
+          runtimeResources: filtered.filter(ep => ep.observed).length,
+          endpointCandidates: filtered.length,
+          limitReached: sourceChars >= MAX_TOTAL_SOURCE_CHARS,
+        },
+        timestamp: Date.now(),
+      });
+      console.debug(`[AGE Analyzer] ${filtered.length} endpoint candidates, ${uniqueGQL.length} GraphQL ops on ${pageHost}`);
+    } finally {
+      _analysisRunning = false;
+      if (_analysisPending) { _analysisPending = false; _scheduleAnalysis(500, false); }
     }
-    for (const [, val] of Object.entries(wg)) {
-      for (const item of _extractURLs(val))
-        allEndpoints.push({ ...item, source: 'window_global', host: pageHost });
-      allGQL.push(..._extractGQL(val));
-    }
-
-    // 5. Deduplicate
-    const seen     = new Set();
-    const unique   = allEndpoints.filter(ep => {
-      if (seen.has(ep.url)) return false;
-      seen.add(ep.url);
-      return true;
-    });
-
-    // 6. Filter noise
-    const filtered = unique.filter(ep => {
-      const u = ep.url;
-      if (u.length < 3) return false;
-      if (/\.(css|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|mp4|webm|pdf|map|txt\.gz)(\?|$)/i.test(u)) return false;
-      if (u.startsWith('data:')) return false;
-      if (u.startsWith('blob:')) return false;
-      if (/^(tel|mailto|javascript):/.test(u)) return false;
-      return true;
-    });
-
-    // 7. Send to background
-    _post('ANALYSIS_RESULT', {
-      host:       pageHost,
-      endpoints:  filtered.slice(0, 2000),
-      graphqlOps: allGQL.slice(0, 500),
-      timestamp:  Date.now(),
-    });
-
-    console.debug(`[AGE Analyzer] ${filtered.length} endpoints, ${allGQL.length} GQL ops on ${pageHost}`);
   }
 
-  // ── Bootstrap ─────────────────────────────────────────────────────────────
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(_runAnalysis, 300), { once: true });
-  } else {
-    setTimeout(_runAnalysis, 300);
+  function _scheduleAnalysis(delay = 700, resetSources = false) {
+    if (resetSources) _scannedExternalSources.clear();
+    if (_analysisTimer) clearTimeout(_analysisTimer);
+    _analysisTimer = setTimeout(() => { _analysisTimer = null; _runAnalysis(); }, delay);
   }
 
-  // Re-run a bounded number of times when SPAs inject additional script bundles.
-  // Debouncing prevents repeated DOM changes from starting concurrent scans.
-  let _dynamicScanTimer = null;
-  let _dynamicScanCount = 0;
   if (typeof MutationObserver !== 'undefined' && document.documentElement) {
     const observer = new MutationObserver(records => {
-      if (_dynamicScanCount >= 10) return;
+      if (_autoRescans >= 12) return;
       const insertedScript = records.some(record =>
         Array.from(record.addedNodes || []).some(node =>
           node && node.nodeType === 1 &&
@@ -422,13 +512,16 @@
         )
       );
       if (!insertedScript) return;
-      clearTimeout(_dynamicScanTimer);
-      _dynamicScanTimer = setTimeout(() => {
-        _dynamicScanCount++;
-        _runAnalysis();
-      }, 1000);
+      _autoRescans++;
+      _scheduleAnalysis(1000, false);
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => _scheduleAnalysis(300, false), { once: true });
+  } else {
+    _scheduleAnalysis(300, false);
   }
 
 })(typeof globalThis !== 'undefined' ? globalThis : window);
