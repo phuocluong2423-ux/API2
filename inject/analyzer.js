@@ -48,6 +48,15 @@
     if (!text || typeof text !== 'string') return [];
     const seen = new Set();
     const results = [];
+    // Many bundles escape URL separators inside JSON strings and generated code.
+    // Analyze both the original source and a conservative decoded view.
+    const decodedText = text
+      .replace(/\\u002f/gi, '/')
+      .replace(/\\x2f/gi, '/')
+      .replace(/\\\//g, '/')
+      .replace(/\\u003a/gi, ':')
+      .replace(/\\x3a/gi, ':');
+    const scanTexts = decodedText === text ? [text] : [text, decodedText];
     const apiPath = /\/(?:api|_api|webapi|v\d+|graphql|gql|trpc|rpc|rest|service|data|auth|oauth|session|admin|internal|mobile|gateway|query|mutation|ajax|backend|functions|\.well-known)(?:\/|[?#]|$)/i;
     const add = (raw, type) => {
       const url = String(raw || '').replace(/[,;.'")\]}>]+$/, '');
@@ -62,22 +71,45 @@
       else if (type === 'versioned') confidence = 74;
       else if (type === 'api_path') confidence = 76;
       else if (type === 'base_url') confidence = 70;
+      else if (type === 'request_call') confidence = 84;
+      else if (type === 'framework_route') confidence = 86;
       results.push({ url, type, confidence, evidence: type });
     };
 
-    for (const m of text.matchAll(/https?:\/\/[^\s"'<>\x60\])}\\,;]{4,}/g)) add(m[0], 'absolute');
+    for (const sourceText of scanTexts) {
+      // Absolute URL literals.
+      for (const m of sourceText.matchAll(/https?:\/\/[^\s"'<>\x60\])}\\,;]{4,}/g)) add(m[0], 'absolute');
 
-    for (const m of text.matchAll(/(?:fetch|axios|got|request|http(?:Client|Service|s)?|url|endpoint|api|graphql|baseURL?|apiBaseURL|apiUrl|route|path|href|uri)\s*[=:(,+<{]\s*['"\x60]?((?:https?:\/\/|\/)\/*[A-Za-z0-9_\-./{}\[\]:?=&%#@!$*+~]{1,1024})/gi)) {
-      add(m[1], m[1].startsWith('/') ? 'path_literal' : 'absolute');
+      // Common request call sites, including client.get('/resource') and fetch('/resource').
+      for (const m of sourceText.matchAll(/\b(?:fetch|open|request|get|post|put|patch|delete|head|options|query|mutate)\s*\(\s*['"\x60]((?:https?:\/\/|\/)[A-Za-z0-9_\-./{}[\]:?=&%#@!$*+~]{1,900})['"\x60]/gi)) {
+        add(m[1], 'request_call');
+      }
+
+      // Framework/router declarations such as router.get('/users') and app.use('/api').
+      for (const m of sourceText.matchAll(/\b(?:router|app|server|route|fastify|express|apiRouter)\s*\.\s*(?:get|post|put|patch|delete|options|head|all|use|route)\s*\(\s*['"\x60](\/[^'"\x60\s]{1,900})['"\x60]/gi)) {
+        add(m[1], 'framework_route');
+      }
+
+      // Framework decorators such as @Get('users') / @Controller('api/v1').
+      for (const m of sourceText.matchAll(/@(Get|Post|Put|Patch|Delete|Options|Head|All|Controller)\s*\(\s*['"\x60]([^'"\x60\s]{1,500})['"\x60]\s*\)/g)) {
+        const path = m[2].startsWith('/') ? m[2] : '/' + m[2];
+        add(path, 'framework_route');
+      }
+
+      // URL/path-like values attached to meaningful configuration keys.
+      for (const m of sourceText.matchAll(/(?:fetch|axios|got|request|http(?:Client|Service|s)?|url|endpoint|api|graphql|baseURL?|apiBaseURL|apiUrl|route|path|href|uri|resource)\s*[=:(,+<{]\s*['"\x60]?((?:https?:\/\/|\/)\/*[A-Za-z0-9_\-./{}[\]:?=&%#@!$*+~]{1,1024})/gi)) {
+        add(m[1], m[1].startsWith('/') ? 'path_literal' : 'absolute');
+      }
+
+      // Conventional API roots, including GraphQL, RPC and versioned endpoints.
+      for (const m of sourceText.matchAll(/['"\x60]((?:\/(?:api|_api|webapi|v\d+|graphql|gql|trpc|rpc|rest|service|data|auth|oauth|session|admin|internal|mobile|gateway|query|mutation|ajax|backend|functions|\.well-known)(?:\/[^'"\x60\s]{0,400})?))['"\x60]/gi)) {
+        add(m[1], 'api_path');
+      }
+
+      for (const m of sourceText.matchAll(/['"]((?:\/(?:api|v\d+|graphql|gql|trpc|rpc|rest|service|data|auth|admin|internal|mobile|gateway)[^'"]{1,400}))['"]\s*:/gi)) add(m[1], 'route_key');
+      for (const m of sourceText.matchAll(/['"\x60](\/(?:v\d+|beta|internal|preview|staging|alpha|canary)\/[^'"\x60\s]{2,200})['"\x60]/g)) add(m[1], 'versioned');
+      for (const m of sourceText.matchAll(/(?:apiBaseUrl|apiBaseURL|baseURL|graphqlEndpoint|apiEndpoint)\s*[:=]\s*['"\x60](https?:\/\/[^'"\x60\s]{4,500}|\/[^'"\x60\s]{2,300})['"\x60]/gi)) add(m[1], 'base_url');
     }
-
-    for (const m of text.matchAll(/['"\x60]((?:\/(?:api|_api|webapi|v\d+|graphql|gql|trpc|rpc|rest|service|data|auth|oauth|session|admin|internal|mobile|gateway|query|mutation|ajax|backend|functions|\.well-known)(?:\/[^'"\x60\s]{0,300})?))['"\x60]/gi)) {
-      add(m[1], 'api_path');
-    }
-    for (const m of text.matchAll(/['"]((?:\/(?:api|v\d+|graphql|gql|trpc|rpc|rest|service|data|auth|admin|internal|mobile|gateway)[^'"]{1,400}))['"]\s*:/gi)) add(m[1], 'route_key');
-    for (const m of text.matchAll(/['"\x60](\/(?:v\d+|beta|internal|preview|staging|alpha|canary)\/[^'"\x60 \t\n]{2,200})['"\x60]/g)) add(m[1], 'versioned');
-    for (const m of text.matchAll(/(?:apiBaseUrl|apiBaseURL|baseURL|graphqlEndpoint|apiEndpoint)\s*[:=]\s*['"\x60](https?:\/\/[^'"\x60\s]{4,500}|\/[^'"\x60\s]{2,300})['"\x60]/gi)) add(m[1], 'base_url');
-
     return results;
   }
   function _extractGQL(text) {
